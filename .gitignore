@@ -1,4 +1,5 @@
 michael_data
+model/*.cdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
