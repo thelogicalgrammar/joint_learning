@@ -1,13 +1,19 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 
-import pymc3 as pm
-import arviz as az
-import theano 
-from theano import tensor as tt
-tprint = theano.printing.Print
+try:
+    import pymc3 as pm
+    import arviz as az
+    import theano
+    import theano.tensor as tt
+    tprint = theano.printing.Print
+except ImportError:
+    print("Pymc3 not found, trying pymc v4 instead")
+    import pymc as pm
+    import arviz as az
+    import aesara as theano
+    import aesara.tensor as tt
+    tprint = theano.printing.Print
 
 from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
 from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
@@ -69,12 +75,10 @@ def update_weights(interpretation_weights_original, word_order_weights_original,
     
     return interpretation_weights, word_order_weights
 
-
 ##################### PyMC3 
 
 def theano_normalize(tensor, axis):
     return tensor / tensor.sum(axis, keepdims=True)
-
 
 ###### (single participant)
 
@@ -196,8 +200,8 @@ def fit_model_single_participant():
         (probs_interpretations, probs_word_orders), outputs_info = theano.scan(
             update_weights_theano,
             sequences=[
-                theano.shared(scenes[true_scenes]),
-                theano.shared(signals)
+                tt.shared(scenes[true_scenes]),
+                tt.shared(signals)
             ],
             outputs_info=[
                 interpretation_weights,
@@ -232,19 +236,18 @@ def fit_model_single_participant():
             return_inferencedata=True
         )
 
-    az.plot_trace(trace, compact=False)
-    plt.tight_layout()
-    plt.show()
+    # az.plot_trace(trace, compact=False)
+    # plt.tight_layout()
+    # plt.show()
 
     with model:
         fit = pm.fit()
 
     with model:
         fit_samples = az.from_pymc3(fit.sample(5000))
-
-    az.plot_trace(fit_samples, compact=False)
-    plt.tight_layout()
-    plt.show()
+    # az.plot_trace(fit_samples, compact=False)
+    # plt.tight_layout()
+    # plt.show()
     
     
 ############### Multiple participants
@@ -295,8 +298,10 @@ def update_weights_theano_multiple_participants(scene, signal,
     tuple of arrays
         interpretation_weights: array
             Same shape as interpretation_weights_original
+            NOTE: normalized before returning
         word_order_weights: array
             Same shape as word_order_weights_original
+            NOTE: normalized before returning
     """
     
     n_parti = interpretation_weights_original.shape[0]
@@ -323,6 +328,7 @@ def update_weights_theano_multiple_participants(scene, signal,
         # get the weights compatible with each word order
         (word_order_weights_original[:,None,:,None] * mask_orders)
         # sum over word order dimension
+        # to get the probability that it's ANY of those orders
         .sum(2)
     )
     
@@ -342,6 +348,7 @@ def update_weights_theano_multiple_participants(scene, signal,
         values_to_add
     )
     
+    # shape: participant, signal, meaning
     interpretation_weights = theano_normalize(
         interpretation_weights_original 
         + learning_weights[:,None,None]*interpretation_to_add,
@@ -351,11 +358,17 @@ def update_weights_theano_multiple_participants(scene, signal,
     # Snippet B (update word order weights)
     
     word_order_to_add = interpretation_weights_original[
-        tt.tile(tt.arange(n_parti).dimshuffle(0,'x','x'), (1,6,3)),
+        tt.tile(
+            tt.arange(n_parti).dimshuffle(0,'x','x'), 
+            (1,6,3)
+        ),
         # for each participant, repeat signal once
         # for each word order.
         # dims (participant, word order, signal)
-        tt.tile(signal.dimshuffle(0,'x',1), (1,6,1)), 
+        tt.tile(
+            signal.dimshuffle(0,'x',1), 
+            (1,6,1)
+        ), 
         scene[:,word_orders]
     ].prod(-1)
         
@@ -368,12 +381,33 @@ def update_weights_theano_multiple_participants(scene, signal,
     return interpretation_weights, word_order_weights
 
 
-def probs_languages_to_probs_scenes_multiple_participants(interpretation_weights, word_order_weights, 
-                                    signals, scenes_trials, word_orders):
+def softmax_theano(x, axis):
+    e_x = tt.exp(x - x.max(axis=axis, keepdims=True))
+    return e_x / e_x.sum(axis=axis, keepdims=True)
+
+
+def probs_languages_to_probs_scenes_multiple_participants(
+                    interpretation_weights, word_order_weights, 
+                    signals, scenes_trials, word_orders, softmax_alphas):
     """
     Finds probability of choosing each of the four scenes in `scenes`
     given the observed utterance and the current probabilities 
     of word-meaning association and word orders
+    
+    Parameters
+    ----------
+    interpretation_weights: array
+        Dimensions: (trial, participant, word, meaning)
+        NOTE: Trial dimension was added in the scan
+    word_order_weights: array
+        Dimensions: (trial, participant, word order)
+        NOTE: Trial dimension was added in the scan
+    signals: array
+        Dimensions: (trial, participant, sentence position)
+    scenes_trials: array
+        Dimensions: (trial, participant, scene, component)
+    word_orders: array
+        Dimensions: (word order, sentence position)
     """
     
     # meaning that each word would be expressing
@@ -382,41 +416,62 @@ def probs_languages_to_probs_scenes_multiple_participants(interpretation_weights
     # e.g., (40, 5, 4, 6, 3)
     meanings_trials_orders = scenes_trials[:,:,:,word_orders]
     
-    return normalize(
-        (
-            # get the probability of the words observed
-            # in each trial expressing each scene
-            # assuming each word order in turn
-            interpretation_weights[
-                tt.arange(interpretation_weights.shape[0])[:,None,None,None,None],
-                tt.arange(interpretation_weights.shape[1])[None,:,None,None,None],
-                signals[:,:,None,None,:],
-                meanings_trials_orders
-            ]
-            # get joint probability of the observed words
-            # (for each trial, word order and scene)
-            .prod(-1) 
-            # multiply by probability of word orders
-            * word_order_weights.dimshuffle(0, 1, 'x', 2)
-        # marginalize out word order
-        # to get probs of observed words in scene
-        ).sum(-1),
-        2
+    # get the probability that the whole sentence 
+    # observed in each trial expresses 
+    # each of the scenes in the trial
+    # assuming each word order in turn
+    # Dimensions: 
+    # (trial, participant, scene in trial, word order)
+    prob_sentence_by_trial_given_order = (
+        interpretation_weights[
+            tt.arange(interpretation_weights.shape[0])[:,None,None,None,None],
+            tt.arange(interpretation_weights.shape[1])[None,:,None,None,None],
+            signals[:,:,None,None,:],
+            meanings_trials_orders
+        ]
+        # get joint probability of the observed words
+        # (for each trial, word order and scene)
+        .prod(-1) 
     )
+    
+    # Marginalize out word order
+    # to get probs of observed words in scene
+    # Dimensions: (trial, participant, scene in trial)
+    unnormalized_probs = (
+        prob_sentence_by_trial_given_order
+        # multiply by probability of word orders
+        * word_order_weights.dimshuffle(0, 1, 'x', 2)
+    ).sum(-1)
+    
+    if softmax_alphas is None:
+        prodprobs = normalize(
+            unnormalized_probs,
+            2
+        )
+        
+    else:
+        prodprobs = softmax_theano(
+            unnormalized_probs*softmax_alphas[:,None],
+            -1
+        )
+        
+    return prodprobs
 
 
 def factory_weight_model_multiple_participants(true_scenes_trials, signals, word_orders,
                                                history_choices_indices, scenes_trials,
                                                hierarchical_order_prior=True,
-                                               hierarchical_learningweights=True,
-                                               save_probs_order=False):
+                                               hierarchicallearningweights=True,
+                                               save_probs_order=False,
+                                               softmax_choice=False,
+                                               store_p_correct=False):
     """
     Parameters
     ----------
     history_choices_indices: None or array
         If none, the model is defined without observed
     """
-    
+        
     # with all these dimensions I've decided to be careful 
     # and explicitly write down all the shapes
     n_trials, n_participants, n_scenes, _ = scenes_trials.shape
@@ -432,7 +487,7 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
     with pm.Model(coords=coords) as model:
 
         ##### Create data
-        
+                
         true_scenes_trials_data = pm.Data(
             'true_scenes_trials',
             true_scenes_trials,
@@ -512,27 +567,45 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
             )
         
         
-        if hierarchical_learningweights:
+        if hierarchicallearningweights:
             
-            learning_weights_mu = pm.HalfNormal(
-                'learning_weights_mu',
-                sigma=3
-            )
             
-            learning_weights_sigma = pm.HalfNormal(
-                'learning_weights_sigma',
-                sigma=3
-            )
+#             This commented definition of the
+#             hierarchical structure causes an error:
+
+#             learning_weights_mu = pm.HalfNormal(
+#                 'learning_weights_mu',
+#                 sigma=2
+#             )
             
-            # shape (# participants)
-            learning_weights = pm.TruncatedNormal(
-                'learning_weights',
-                mu=learning_weights_mu,
-                sigma=learning_weights_sigma,
-                lower=0,
+#             learning_weights_sigma = pm.HalfNormal(
+#                 'learning_weights_sigma',
+#                 sigma=2
+#             )
+            
+            zs_sigma = pm.Normal(
+                'zetas_sigma',
                 dims=('participant')
             )
             
+            learning_weights_mu = pm.Normal(
+                'learning_weights_mu',
+                mu=0.,
+                sigma=0.5
+            )
+        
+            learning_weights_sigma = pm.HalfNormal(
+                'learning_weights_sigma',
+                sigma=0.1
+            )
+            
+            # shape (# participants)
+            learning_weights = pm.Deterministic(
+                'learning_weights',
+                pm.math.exp(learning_weights_mu + zs_sigma * learning_weights_sigma),
+                dims=('participant')
+            )
+                        
         else:
             
             # shape (# participants)
@@ -542,6 +615,15 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
                 beta=15.,
                 dims=('participant')
             )
+            
+        if softmax_choice:
+            softmax_alphas = pm.Exponential(
+                'softmax_alpha',
+                lam=0.5,
+                dims=('participant')
+            )
+        else:
+            softmax_alphas = None
         
         ####### likelihood part
         
@@ -580,13 +662,23 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
             )
 
         # dims (trial, participant, scenes in trial)
+        # where there are always 4 scenes in the trial
         prob_scenes = probs_languages_to_probs_scenes_multiple_participants(
             probs_interpretations, 
             probs_word_orders, 
             signals_data, 
             scenes_trials_data, 
-            word_orders_data
+            word_orders_data,
+            softmax_alphas
         )
+        
+        # scene 0 is always the correct one in 
+        # the experiment's dataset
+        if store_p_correct:
+            pm.Deterministic(
+                'p_correct',
+                prob_scenes[:,:,0]
+            )
 
         pm.Categorical(
             'chosen_scenes',
@@ -599,7 +691,10 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
 
 
 def prior_predictive_sample(n_trials, n_participants):
-    
+    """
+    Take prior predictive samples, i.e., run simulated experiment
+    """
+
     simulated_results = simulate_full_experiment(
         n_trials, 
         n_participants,             
@@ -619,7 +714,7 @@ def prior_predictive_sample(n_trials, n_participants):
         history_choices_indices=None,
         save_probs_order=True,
         hierarchical_order_prior=True,
-        hierarchical_learningweights=False
+        hierarchicallearningweights=False
     )
 
     with model:
@@ -628,8 +723,8 @@ def prior_predictive_sample(n_trials, n_participants):
     return simulated_results, simulated_data
 
 
-def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials=None,
-                     fit_kwargs=None):
+def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='all',
+                     fit_kwargs=None, model_kwargs=None, save=True, datapath=None):
     """
     Parameters
     ----------
@@ -642,7 +737,9 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials=No
         If None, all trials are considered
     """
     
-    data = get_data()
+    data = get_data(
+        datapath
+    )
 
     analysis_arrays = get_analysis_arrays(
         data,
@@ -655,87 +752,178 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials=No
         print(f'Getting only the first {first_n_trials} trials')
         analysis_arrays = get_first_n_trials(
             analysis_arrays,
-            n_trials=first_n_trials
+            n_trials= first_n_trials
         )
 
     _,_,_, word_orders = define_objects(
         full_output=True
     )
 
+    if model_kwargs is None:
+        model_kwargs = dict()
+    
     model = factory_weight_model_multiple_participants(
         analysis_arrays['true_scenes_trials'],
         analysis_arrays['signals'],
         word_orders,
         analysis_arrays['history_choices_indices'],
-        analysis_arrays['scenes_trials']
+        analysis_arrays['scenes_trials'],
+        **model_kwargs
     )
     
     print('Built the model')
     
-    helps = first_n_trials if first_n_trials is None else 'all'
+    added_fit = (
+        '-' 
+        '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
+    ) if fit_kwargs is not None else ''
+    
     outputfile_name = (
         'results/'
         f'method-{method}'
         f'_excluded-{participant_exclusion}'
-        f'_trialsupto-{helps}'
+        f'_trialsupto-{first_n_trials}'
+        +added_fit+
         '.cdf'
     )
+    
+    print(f"Looking at file with name {outputfile_name}")
+
+    print('Checking test point: ')
+    print(model.check_test_point())
 
     if method=='variational':
         try:
             trace = az.from_netcdf(
                 outputfile_name
             )
+            print("Already found a file with that name, got from file")
         except FileNotFoundError:
+            if fit_kwargs is None:
+                fit_kwargs = {
+                    'n': 50000
+                }
+
             with model:
-                if fit_kwargs is None:
-                    fit_kwargs = {'n': 50000}
+
+                # advi = pm.ADVI()
+
+                # tracker = pm.callbacks.Tracker(
+                #     mean=advi.approx.mean.eval, 
+                #     std=advi.approx.std.eval,  
+                # )
+
+                # fit = advi.fit(
+                #     callbacks=[tracker],
+                #     **fit_kwargs
+                # )
+
                 fit = pm.fit(
                     **fit_kwargs
                 )
+
+            # print("Mean: ", tracker['mean'])
+            # print("Std: ", tracker['std'])
+
+#             fig = plt.figure(figsize=(16, 9))
+#             mu_ax = fig.add_subplot(221)
+#             std_ax = fig.add_subplot(222)
+#             hist_ax = fig.add_subplot(212)
+#             mu_ax.plot(tracker["mean"])
+#             mu_ax.set_title("Mean track")
+#             std_ax.plot(tracker["std"])
+#             std_ax.set_title("Std track")
+#             hist_ax.plot(advi.hist)
+#             hist_ax.set_title("Negative ELBO track");
+#             plt.show()
+
             with model:
-                trace = az.from_pymc3(
-                    fit.sample(1000)
+                pmtrace = fit.sample(
+                    1000
                 )
-            az.to_netcdf(
-                trace, 
-                outputfile_name
-            )
-            print('Saved samples in results folder')
+                trace = az.from_pymc3(
+                    pmtrace
+                )
+
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved samples in results folder')
 
     elif method=='hmc':
         try:
             trace = az.from_netcdf(
                 outputfile_name
             )
+            print("Already found a file with that name, got from file")
+            
         except FileNotFoundError:
             with model:
                 if fit_kwargs is None:
                     fit_kwargs = {
                         'draws': 2000, 
-                        'return_inferencedata': True
                     }
                 trace = pm.sample(
-                    **fit_kwargs
+                    **fit_kwargs,
                 )
-            az.to_netcdf(
-                trace, 
+                # sampling_jax.sample_numpyro_nuts(**fit_kwargs)
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved samples in results folder')
+            
+    elif method=='map':
+        try:
+            trace = az.from_netcdf(
                 outputfile_name
             )
-            print('Saved samples in results folder')
+            print("Already found a file with that name, got from file")
+            
+        except FileNotFoundError:
+            with model:
+                # technically not a trace
+                trace = pm.find_MAP()
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved MAP in results folder')
     else:
-        raise ValueError('Method not implemented! Choose hmc or variational')
+        raise ValueError('Method not implemented!')
         
     return data, analysis_arrays, model, trace
-    
+
+
 if __name__=='__main__':
     
     get_and_fit_data(
         participant_exclusion=True, 
         method='hmc',
-        first_n_trials=20,
+        # first_n_trials=100,
         fit_kwargs={
-            'cores': 1, 
-            'draws': 1000
-        }
+            'draws': 1000,
+            'tune': 1000,
+            'chains': 4
+        },
+        model_kwargs={
+            'hierarchicallearningweights': False,
+            'softmax_choice': True
+        },
+        datapath=
     )
+    
+    # get_and_fit_data(
+    #     participant_exclusion=True, 
+    #     method='variational',
+    #     model_kwargs={
+    #         'hierarchicallearningweights': True,
+    #         'softmax_choice': True,
+    #         'store_p_correct': True
+    #     },
+    #     # datapath=
+    # )

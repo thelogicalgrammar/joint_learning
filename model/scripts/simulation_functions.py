@@ -1,9 +1,12 @@
 import numpy as np
 import itertools as it
 
-# from ipywidgets import IntProgress
-from IPython.display import display
-from ipywidgets import IntProgress
+try:
+    from IPython.display import display
+    from ipywidgets import IntProgress
+except ImportError:
+    print("Couldn't import progress bar stuff. Fine if you're just fitting model")
+
 
 def normalize(arr, axis=0):
     return arr / arr.sum(axis, keepdims=True)

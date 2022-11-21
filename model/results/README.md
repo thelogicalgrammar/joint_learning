@@ -1,0 +1,1 @@
+This folder contains the results stored in .cdf format. Use the functions in `model/scripts/` to loads or save them. See `model/basicmodel.ipynb` for examples.

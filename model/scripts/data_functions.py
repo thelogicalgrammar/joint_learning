@@ -1,11 +1,15 @@
 import pandas as pd
-from scipy.stats import rankdata, binomtest
 import numpy as np
 from re import split
 from copy import deepcopy
+from scipy.stats import rankdata, binomtest
 
-def get_data():
-    raw_data = pd.read_csv('../michael_data/data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv')
+def get_data(datapath=None):
+
+    if datapath is None:
+        datapath = '../michael_data/data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv'
+
+    raw_data = pd.read_csv(datapath)
 
     # display(raw_data.head())
 
@@ -385,7 +389,13 @@ def get_analysis_arrays(data, exclude_nonimproving_participants=True):
     }
 
 
-def get_first_n_trials(analysis_arrays, n_trials=100):
+def get_first_n_trials(analysis_arrays, n_trials='all'):
+    
+    if n_trials=='all':
+        # get all the values in the 
+        # indexing below
+        n_trials = None
+    
     return_arrays = deepcopy(analysis_arrays)
     
     # just change the arrays with a trial dimension
