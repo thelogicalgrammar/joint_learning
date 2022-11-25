@@ -2,7 +2,7 @@
 
 ## Project structure
 
-All the modelling is in the `model` folder. The `model` folder contains:
+All the modelling scripts are in the `model` folder. The `model` folder contains:
 - `basicmodel.ipynb`: The main file to see the work in the project. Contains plots and explanations.
 - `figures`: Contains some of the modelling and data visualizations.
 - `scripts`: Contains files with most of the code. Specifically:
@@ -12,9 +12,12 @@ All the modelling is in the `model` folder. The `model` folder contains:
 	- `simulation_functions.py`: Functions to simulate fake datasets from the weight model and idealized Bayesian model.
 	- `weight_model_fit`: Functions to fit the weight model to experimental data.
 
-## How to fit weight model
+The folder `server_jobs` contains files to run the weight model fit on a SLURM scheduler.
 
-Following libraries are needed:
+## How to fit the weight model locally
+
+The following libraries are needed:
+
 - Pandas
 - Numpy
 - Scipy
@@ -50,5 +53,7 @@ python -m scripts.weight_model_fit
 
 This should start the fitting!
 
+## How to fit the weight model on a server with a SLURM scheduler
 
+Please see the `README.md` file in the `server_jobs` folder.
  

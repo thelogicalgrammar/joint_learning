@@ -6,6 +6,7 @@
 
 module load 2021
 module load Python/3.9.5-GCCcore-10.3.0
-source ../../venv/bin/activate
+source ../../virtualenv/bin/activate
 
-python ../model/scripts/weight_model_fit.py
+cd ../
+python -m server_jobs.main
