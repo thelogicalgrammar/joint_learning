@@ -906,15 +906,15 @@ if __name__=='__main__':
         method='hmc',
         # first_n_trials=100,
         fit_kwargs={
-            'draws': 1000,
-            'tune': 1000,
+            'draws': 10,
+            'tune': 10,
             'chains': 4
         },
         model_kwargs={
             'hierarchicallearningweights': False,
             'softmax_choice': True
         },
-        datapath=
+        datapath="../data.csv"
     )
     
     # get_and_fit_data(
