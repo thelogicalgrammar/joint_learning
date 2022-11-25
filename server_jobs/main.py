@@ -68,7 +68,7 @@ parser.add_argument(
 
 parser.add_argument(
     '--datapath',
-    default='../../data.csv',
+    default='../data.csv',
     type=str,
     help='Where to look for data (relative to main project directory'
 )
