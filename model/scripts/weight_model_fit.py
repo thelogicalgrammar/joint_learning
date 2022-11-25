@@ -789,8 +789,11 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
     
     print(f"Looking at file with name {outputfile_name}")
 
-    print('Checking test point: ')
-    print(model.check_test_point())
+    try:
+        print('Checking test point: ')
+        print(model.check_test_point())
+    except AttributeError:
+        print('check_test_point is not defined')
 
     if method=='variational':
         try:
