@@ -47,14 +47,14 @@ parser.add_argument(
 
 parser.add_argument(
     '--draws',
-    default=10,
+    default=1,
     type=int,
     help='How many actual samples to take'
 )
 
 parser.add_argument(
     '--tune',
-    default=10,
+    default=1,
     type=int,
     help='How many tuning samples to take'
 )

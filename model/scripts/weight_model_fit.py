@@ -849,11 +849,18 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
                 )
 
             if save:
-                az.to_netcdf(
-                    trace, 
-                    outputfile_name
-                )
-                print('Saved samples in results folder')
+                try:
+                    az.to_netcdf(
+                        trace, 
+                        outputfile_name
+                    )
+                    print('Saved samples in results folder')
+                except PermissionError:
+                    az.to_netcdf(
+                        trace, 
+                        'model/'+outputfile_name
+                    )
+                    print('Saved samples in results folder')
 
     elif method=='hmc':
         try:
@@ -891,10 +898,16 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
                 # technically not a trace
                 trace = pm.find_MAP()
             if save:
-                az.to_netcdf(
-                    trace, 
-                    outputfile_name
-                )
+                try:
+                    az.to_netcdf(
+                        trace, 
+                        outputfile_name
+                    )
+                except PermissionError:
+                    az.to_netcdf(
+                        trace, 
+                        'model/'+outputfile_name
+                    )
                 print('Saved MAP in results folder')
     else:
         raise ValueError('Method not implemented!')
