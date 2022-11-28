@@ -47,21 +47,21 @@ parser.add_argument(
 
 parser.add_argument(
     '--draws',
-    default=1,
+    default=200,
     type=int,
     help='How many actual samples to take'
 )
 
 parser.add_argument(
     '--tune',
-    default=1,
+    default=1000,
     type=int,
     help='How many tuning samples to take'
 )
 
 parser.add_argument(
     '--chains',
-    default=4,
+    default=32,
     type=int,
     help='How many chains to run in parallel'
 )

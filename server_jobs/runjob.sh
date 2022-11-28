@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH -n 16
+#SBATCH -n 32
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=fausto.carcassi@gmail.com
-#SBATCH -t 3:00:00
+#SBATCH -t 100:00:00
 
 module load 2021
 module load Python/3.9.5-GCCcore-10.3.0
