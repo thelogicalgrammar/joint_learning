@@ -724,7 +724,8 @@ def prior_predictive_sample(n_trials, n_participants):
 
 
 def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='all',
-                     fit_kwargs=None, model_kwargs=None, save=True, datapath=None):
+                     fit_kwargs=None, model_kwargs=None, save=True, datapath=None,
+                     outputfile_append=''):
     """
     Parameters
     ----------
@@ -784,6 +785,7 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
         f'_excluded-{participant_exclusion}'
         f'_trialsupto-{first_n_trials}'
         +added_fit+
+        +outputfile_append+
         '.cdf'
     )
     

@@ -47,21 +47,21 @@ parser.add_argument(
 
 parser.add_argument(
     '--draws',
-    default=200,
+    default=1,
     type=int,
     help='How many actual samples to take'
 )
 
 parser.add_argument(
     '--tune',
-    default=1000,
+    default=1,
     type=int,
     help='How many tuning samples to take'
 )
 
 parser.add_argument(
     '--chains',
-    default=32,
+    default=4,
     type=int,
     help='How many chains to run in parallel'
 )
@@ -73,9 +73,19 @@ parser.add_argument(
     help='Where to look for data (relative to main project directory'
 )
 
+parser.add_argument(
+    '--outputfile_append',
+    default='',
+    type=str,
+    help='String to append to the end of the stored trace'
+)
+
 if __name__=='__main__':
 
     args = parser.parse_args()
+
+    print('Arguments passed to the job: ')
+    print(args)
     
     get_and_fit_data(
         participant_exclusion=args.participant_exclusion, 
@@ -90,5 +100,6 @@ if __name__=='__main__':
             'hierarchicallearningweights': args.hierarchicallearningweights,
             'softmax_choice': args.softmax_choice
         },
-        datapath=args.datapath
+        datapath=args.datapath,
+        outputfile_append=args.outputfile_append
     )
