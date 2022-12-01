@@ -10,6 +10,10 @@ source ../../virtualenv/bin/activate
 
 cd ../
 # launch 8 jobs in parallel, each using 4 cores
-for n in {1..8}; do
-	python -m server_jobs.main --outputfile_append "$n" &
-done
+# for n in {1..8}; do
+# 	python -m server_jobs.main --cores 4 --tune 4 --draws 4  --outputfile_append "$n" &
+# done
+
+echo "Venv activated, starting python job"
+
+python -m -u server_jobs.main --cores 32 --tune 2 --draws 2

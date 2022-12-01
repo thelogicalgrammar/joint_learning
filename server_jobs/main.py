@@ -60,10 +60,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--chains',
+    '--cores',
     default=4,
     type=int,
-    help='How many chains to run in parallel'
+    help='How many cores (chains) to use in parallel'
 )
 
 parser.add_argument(
@@ -94,7 +94,7 @@ if __name__=='__main__':
         fit_kwargs={
             'draws': args.draws,
             'tune': args.tune,
-            'chains': args.chains
+            'cores': args.cores
         },
         model_kwargs={
             'hierarchicallearningweights': args.hierarchicallearningweights,
