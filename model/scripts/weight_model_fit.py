@@ -784,9 +784,9 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
         f'method-{method}'
         f'_excluded-{participant_exclusion}'
         f'_trialsupto-{first_n_trials}'
-        +added_fit+
-        +outputfile_append+
-        '.cdf'
+        +added_fit
+        +outputfile_append
+        +'.cdf'
     )
     
     print(f"Looking at file with name {outputfile_name}")
