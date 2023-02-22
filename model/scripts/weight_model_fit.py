@@ -1,22 +1,30 @@
 import numpy as np
 import pandas as pd
+import arviz as az
+
+from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
+from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
 
 try:
     import pymc3 as pm
-    import arviz as az
     import theano
     import theano.tensor as tt
     tprint = theano.printing.Print
 except ImportError:
-    print("Pymc3 not found, trying pymc v4 instead")
-    import pymc as pm
-    import arviz as az
-    import aesara as theano
-    import aesara.tensor as tt
-    tprint = theano.printing.Print
+    try:
+        print("Pymc3 not found, trying pymc v4 instead")
+        import pymc as pm
+        import aesara as theano
+        import aesara.tensor as tt
+        tprint = theano.printing.Print
+    except ImportError:
+        print("Pymc v4 not found, trying pymc v5")
+        import pymc as pm
+        import pytensor as theano
+        import pytensor.tensor as tt
+        tprint = theano.printing.Print
 
-from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
-from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
+print("Beginning: Using this version of pymc: ", pm.__version__)
 
 ############## Simulate data with numpy
 
@@ -75,13 +83,14 @@ def update_weights(interpretation_weights_original, word_order_weights_original,
     
     return interpretation_weights, word_order_weights
 
+
 ##################### PyMC3 
 
 def theano_normalize(tensor, axis):
     return tensor / tensor.sum(axis, keepdims=True)
 
-###### (single participant)
 
+###### (single participant)
 
 def update_weights_theano(scene, signal, interpretation_weights_original, 
                           word_order_weights_original, word_orders):
@@ -293,6 +302,9 @@ def update_weights_theano_multiple_participants(scene, signal,
         dims: (word order,3)
         shape: (6,3)
         Word orders (see functions above for description)
+    learning_weights: array
+        dims: (participant)
+        The learning weight of each participant
     Returns
     -------
     tuple of arrays
@@ -308,8 +320,8 @@ def update_weights_theano_multiple_participants(scene, signal,
     
     ### Snippet A (update interpretation weights)
 
-    # get one-hot vectors for the indices as described above
-    # in which to add the calculated weights that should be added
+    # get one-hot vectors for the indices as described in the notebook
+    # in which to add the calculated weights that should be added.
     # Dimensions (participant, object in scene, word order, signal)
     # shape: (# participants, 3, 6, 3)
     mask_orders = tt.eq(
@@ -342,14 +354,20 @@ def update_weights_theano_multiple_participants(scene, signal,
     # insert value to right locations
     # keep 0 everywhere else
     interpretation_to_add = tt.set_subtensor(
+        # create an array with shape (participant, signal, meaning)
         tt.zeros(interpretation_weights_original.shape)[
             arg1, arg2, arg3
         ],
         values_to_add
     )
     
+    # Create array with new weights and then normalize
+    # in the meaning dimension 
+    # (get a distribution over meanings given a signal
+    # which makes sense since this is an interpretation matrix)
     # shape: participant, signal, meaning
     interpretation_weights = theano_normalize(
+        # add to the original array
         interpretation_weights_original 
         + learning_weights[:,None,None]*interpretation_to_add,
         axis=-1
@@ -357,13 +375,14 @@ def update_weights_theano_multiple_participants(scene, signal,
     
     # Snippet B (update word order weights)
     
+    # weights to add to the word order
     word_order_to_add = interpretation_weights_original[
         tt.tile(
             tt.arange(n_parti).dimshuffle(0,'x','x'), 
             (1,6,3)
         ),
-        # for each participant, repeat signal once
-        # for each word order.
+        # for each participant, 
+        # repeat signal once for each word order.
         # dims (participant, word order, signal)
         tt.tile(
             signal.dimshuffle(0,'x',1), 
@@ -464,7 +483,8 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
                                                hierarchicallearningweights=True,
                                                save_probs_order=False,
                                                softmax_choice=False,
-                                               store_p_correct=False):
+                                               store_p_correct=False
+                                               ):
     """
     Parameters
     ----------
@@ -748,6 +768,15 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
     )
     
     print('Got and wrangled the data')
+    try:
+        # For some reasons pymc wasn't loaded here!
+        import pymc3 as pm
+        import theano
+        import theano.tensor as tt
+        tprint = theano.printing.Print
+        print("Using this version of pymc: ", pm.__version__)
+    except ModuleNotFoundError:
+        print("Pymc3 not found")
     
     if first_n_trials is not None:
         print(f'Getting only the first {first_n_trials} trials')
@@ -876,18 +905,60 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
                 if fit_kwargs is None:
                     fit_kwargs = {
                         'draws': 2000, 
+                        'return_inferencedata':True
                     }
                 trace = pm.sample(
                     **fit_kwargs,
                 )
-                # sampling_jax.sample_numpyro_nuts(**fit_kwargs)
             if save:
                 az.to_netcdf(
                     trace, 
                     outputfile_name
                 )
                 print('Saved samples in results folder')
+
+    elif method=='jax':
+        
+        ##### TODO! Does not work yet!
+        
+        print('Using jax')
+
+        # Override imports above since we're gonna need
+        # pymc v4 if we use JAX
+        import pymc as pm
+        import aesara as theano
+        import aesara.tensor as tt
+        tprint = theano.printing.Print
+
+        import jax
+        import jax.numpy as jnp
+        import jax.scipy as jsp
+        import pymc.sampling_jax
+        from aesara.link.jax.dispatch import jax_funcify
+
+
+        try:
+            trace = az.from_netcdf(
+                outputfile_name
+            )
+            print("Already found a file with that name, got from file")
             
+        except FileNotFoundError:
+            with model:
+                if fit_kwargs is None:
+                    fit_kwargs = {
+                        'draws': 2000, 
+                    }
+                trace = sampling_jax.sample_numpyro_nuts(
+                    **fit_kwargs
+                )
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved samples in results folder')
+
     elif method=='map':
         try:
             trace = az.from_netcdf(
@@ -919,10 +990,26 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
 
 if __name__=='__main__':
     
+    # get_and_fit_data(
+    #     participant_exclusion=True, 
+    #     method='hmc',
+    #     # first_n_trials=100,
+    #     fit_kwargs={
+    #         'draws': 10,
+    #         'tune': 10,
+    #         'chains': 4
+    #     },
+    #     model_kwargs={
+    #         'hierarchicallearningweights': False,
+    #         'softmax_choice': True
+    #     },
+    #     datapath="../data.csv"
+    # )
+
     get_and_fit_data(
         participant_exclusion=True, 
         method='hmc',
-        # first_n_trials=100,
+        first_n_trials=100,
         fit_kwargs={
             'draws': 10,
             'tune': 10,
@@ -932,7 +1019,7 @@ if __name__=='__main__':
             'hierarchicallearningweights': False,
             'softmax_choice': True
         },
-        datapath="../data.csv"
+        datapath="../michael_data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv"
     )
     
     # get_and_fit_data(

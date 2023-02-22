@@ -1,5 +1,6 @@
-from model.scripts.weight_model_fit import get_and_fit_data
+from model.scripts import weight_model_fit
 import argparse
+from pprint import pprint
 
 parser = argparse.ArgumentParser(
     prog = 'Weight model fit',
@@ -15,7 +16,7 @@ parser.add_argument(
 
 parser.add_argument(
     '--method',
-    choices=['hmc', 'variational'],
+    choices=['hmc', 'variational', 'jax'],
     default='hmc',
     type=str,
     help='Method of model fitting.'
@@ -85,9 +86,9 @@ if __name__=='__main__':
     args = parser.parse_args()
 
     print('Arguments passed to the job: ')
-    print(args)
+    pprint(args)
     
-    get_and_fit_data(
+    weight_model_fit.get_and_fit_data(
         participant_exclusion=args.participant_exclusion, 
         method=args.method,
         first_n_trials=args.first_n_trials,
@@ -101,5 +102,5 @@ if __name__=='__main__':
             'softmax_choice': args.softmax_choice
         },
         datapath=args.datapath,
-        outputfile_append=args.outputfile_append
+        outputfile_append=args.outputfile_append,
     )
