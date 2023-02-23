@@ -2,10 +2,10 @@ echo "Importing anaconda module if not already available"
 module load anaconda2/4.3.0 || true
 
 echo "Deactivating environment if one was activated"
-conda deactivate
+source conda deactivate
 
 echo "Activating joint_learning environment"
-conda activate joint_learning
+source conda activate joint_learning
 
 cd ../
 echo "Submitting job..."
