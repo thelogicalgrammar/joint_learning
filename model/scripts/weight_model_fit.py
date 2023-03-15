@@ -715,10 +715,16 @@ def prior_predictive_sample(n_trials, n_participants, logging=False):
     """
     Take prior predictive samples, i.e., run simulated experiment
     """
+    
+    if logging:
+        print("Running prior_predictive_sample")
 
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
     )
+    
+    if logging:
+        print("Ran define_objects")
     
     simulated_results = simulate_full_experiment(
         n_trials, 
