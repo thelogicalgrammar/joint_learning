@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import arviz as az
+import pickle
 
 from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
 from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
@@ -480,7 +481,7 @@ def probs_languages_to_probs_scenes_multiple_participants(
 def factory_weight_model_multiple_participants(true_scenes_trials, signals, word_orders,
                                                history_choices_indices, scenes_trials,
                                                hierarchical_order_prior=True,
-                                               hierarchicallearningweights=True,
+                                               hierarchicallearningweights=False,
                                                save_probs_order=False,
                                                softmax_choice=False,
                                                store_p_correct=False
@@ -717,7 +718,8 @@ def prior_predictive_sample(n_trials, n_participants):
 
     simulated_results = simulate_full_experiment(
         n_trials, 
-        n_participants,             
+        n_participants,
+        # unique means each participant gets their own true language
         true_languages_setting='unique', 
         simulate_responses=False
     )
@@ -743,9 +745,73 @@ def prior_predictive_sample(n_trials, n_participants):
     return simulated_results, simulated_data
 
 
+def simulate_parameter_recovery(n_trials=150, n_participants=150, 
+                                recovery_method='variational', n=0,
+                                save_path='param_recovery/'):
+    """
+    Put this in a function so I can run it as a script on the server.
+    
+    """
+    
+    simulated_results, simulated_data = prior_predictive_sample(
+        n_trials, 
+        n_participants
+    )
+    
+    scenes, languages, language_interpret, word_orders = define_objects(
+        full_output=True
+    )
+    
+    ppc_model = factory_weight_model_multiple_participants(
+        simulated_results['true_scenes_trials'],
+        simulated_results['signals'],
+        word_orders,
+        simulated_data['chosen_scenes'][0],
+        simulated_results['scenes_trials']
+    )
+    
+    output = {
+        'results': simulated_results,
+        'data': simulated_data
+    }
+    
+    if recovery_method=='variational':
+    
+        with ppc_model:
+            ppc_fit = pm.fit(n=50000)
+
+        with ppc_model:
+            ppc_fit_samples = az.from_pymc3(
+                ppc_fit.sample(1000)
+            )
+            
+        output['samples'] = ppc_fit_samples
+
+        with open(f'{save_path}ppc_samples_variational_{n}.pickle', 'wb') as openfile:
+            pickle.dump(
+                output, 
+                openfile
+            )
+    
+    elif recovery_method=='hmc':
+        
+        with ppc_model:
+            ppc_samples = pm.sample(
+                return_inferencedata=True
+            )
+        
+        output['samples'] = ppc_samples
+            
+        with open(f'{save_path}ppc_samples_hmc_{n}.pickle', 'wb') as openfile:
+            pickle.dump(
+                output, 
+                openfile
+            )
+
+
 def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='all',
                      fit_kwargs=None, model_kwargs=None, save=True, datapath=None,
-                     outputfile_append=''):
+                     outputfile_append='', save_path='results/'):
     """
     Parameters
     ----------
@@ -808,8 +874,7 @@ def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='a
         '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
     ) if fit_kwargs is not None else ''
     
-    outputfile_name = (
-        'results/'
+    outputfile_name = save_path+(
         f'method-{method}'
         f'_excluded-{participant_exclusion}'
         f'_trialsupto-{first_n_trials}'

@@ -1,0 +1,1 @@
+This folder contains the files produced for testing the capacity of the model to recover the true parameters.
