@@ -10,7 +10,7 @@ module load devel/miniconda/3
 source $MINICONDA_HOME/etc/profile.d/conda.sh
 
 conda deactivate
-conda activate LoT_recovery
+conda activate joint_learning
 
 cd ../
 
