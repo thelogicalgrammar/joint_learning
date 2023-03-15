@@ -752,6 +752,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
     Put this in a function so I can run it as a script on the server.
     """
     
+    print("Called simulated_parameter_recovery")
+    
     simulated_results, simulated_data = prior_predictive_sample(
         n_trials, 
         n_participants
