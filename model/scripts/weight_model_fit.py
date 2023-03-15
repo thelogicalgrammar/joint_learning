@@ -711,11 +711,15 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
     return model
 
 
-def prior_predictive_sample(n_trials, n_participants):
+def prior_predictive_sample(n_trials, n_participants, logging=False):
     """
     Take prior predictive samples, i.e., run simulated experiment
     """
 
+    scenes, languages, language_interpret, word_orders = define_objects(
+        full_output=True
+    )
+    
     simulated_results = simulate_full_experiment(
         n_trials, 
         n_participants,
@@ -723,10 +727,9 @@ def prior_predictive_sample(n_trials, n_participants):
         true_languages_setting='unique', 
         simulate_responses=False
     )
-
-    scenes, languages, language_interpret, word_orders = define_objects(
-        full_output=True
-    )
+    
+    if logging:
+        print("Simulated experiment and defined objects")
 
     model = factory_weight_model_multiple_participants(
         true_scenes_trials=simulated_results['true_scenes_trials'], 
@@ -738,10 +741,16 @@ def prior_predictive_sample(n_trials, n_participants):
         hierarchical_order_prior=True,
         hierarchicallearningweights=False
     )
+    
+    if logging:
+        print("Defined model")
 
     with model:
         simulated_data = pm.sample_prior_predictive(samples=1)
 
+    if logging:
+        print("Generated simulated data")
+    
     return simulated_results, simulated_data
 
 
@@ -756,7 +765,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
     
     simulated_results, simulated_data = prior_predictive_sample(
         n_trials, 
-        n_participants
+        n_participants,
+        logging=True
     )
 
     print("Took the prior sample to recover")
