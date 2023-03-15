@@ -750,13 +750,14 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
                                 save_path='param_recovery/'):
     """
     Put this in a function so I can run it as a script on the server.
-    
     """
     
     simulated_results, simulated_data = prior_predictive_sample(
         n_trials, 
         n_participants
     )
+
+    print("Took the prior sample to recover")
     
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
@@ -769,6 +770,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
         simulated_data['chosen_scenes'][0],
         simulated_results['scenes_trials']
     )
+
+    print("Defined the ppc model")
     
     output = {
         'results': simulated_results,
@@ -776,6 +779,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
     }
     
     if recovery_method=='variational':
+
+        print("Running variational fit")
     
         with ppc_model:
             ppc_fit = pm.fit(n=50000)
@@ -794,6 +799,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
             )
     
     elif recovery_method=='hmc':
+
+        print("Running hmc fit")
         
         with ppc_model:
             ppc_samples = pm.sample(
@@ -809,7 +816,8 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
             )
 
 
-def get_and_fit_data(participant_exclusion=True, method='hmc', first_n_trials='all',
+def get_and_fit_data(participant_exclusion=True,
+                     method='hmc', first_n_trials='all',
                      fit_kwargs=None, model_kwargs=None, save=True, datapath=None,
                      outputfile_append='', save_path='results/'):
     """
