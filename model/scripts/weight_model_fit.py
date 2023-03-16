@@ -483,9 +483,8 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
                                                hierarchical_order_prior=True,
                                                hierarchicallearningweights=False,
                                                save_probs_order=False,
-                                               softmax_choice=False,
-                                               store_p_correct=False
-                                               ):
+                                               softmax_choice=True,
+                                               store_p_correct=False):
     """
     Parameters
     ----------
@@ -711,20 +710,22 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
     return model
 
 
-def prior_predictive_sample(n_trials, n_participants, logging=False):
+def prior_predictive_sample(n_trials, n_participants, factory_kwargs=None):
     """
     Take prior predictive samples, i.e., run simulated experiment
     """
     
-    if logging:
-        print("Running prior_predictive_sample")
+    if factory_kwargs is None:
+        factory_kwargs = {
+            'save_probs_order': True,
+            'hierarchical_order_prior': True,
+            'hierarchicallearningweights': True,
+            'softmax_choice': True
+        }
 
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
     )
-    
-    if logging:
-        print("Ran define_objects")
     
     simulated_results = simulate_full_experiment(
         n_trials, 
@@ -733,9 +734,6 @@ def prior_predictive_sample(n_trials, n_participants, logging=False):
         true_languages_setting='unique', 
         simulate_responses=False
     )
-    
-    if logging:
-        print("Simulated experiment and defined objects")
 
     model = factory_weight_model_multiple_participants(
         true_scenes_trials=simulated_results['true_scenes_trials'], 
@@ -743,19 +741,11 @@ def prior_predictive_sample(n_trials, n_participants, logging=False):
         scenes_trials=simulated_results['scenes_trials'],
         word_orders=word_orders,
         history_choices_indices=None,
-        save_probs_order=True,
-        hierarchical_order_prior=True,
-        hierarchicallearningweights=False
+        **factory_kwargs
     )
-    
-    if logging:
-        print("Defined model")
 
     with model:
         simulated_data = pm.sample_prior_predictive(samples=1)
-
-    if logging:
-        print("Generated simulated data")
     
     return simulated_results, simulated_data
 
@@ -767,15 +757,18 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
     Put this in a function so I can run it as a script on the server.
     """
     
-    print("Called simulated_parameter_recovery")
-    
+    factory_kwargs = {
+        'save_probs_order': True,
+        'hierarchical_order_prior': True,
+        'hierarchicallearningweights': True,
+        'softmax_choice': True
+    }
+        
     simulated_results, simulated_data = prior_predictive_sample(
         n_trials, 
         n_participants,
-        logging=True
+        factory_kwargs=factory_kwargs
     )
-
-    print("Took the prior sample to recover")
     
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
@@ -786,10 +779,9 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
         simulated_results['signals'],
         word_orders,
         simulated_data['chosen_scenes'][0],
-        simulated_results['scenes_trials']
+        simulated_results['scenes_trials'],
+        **factory_kwargs
     )
-
-    print("Defined the ppc model")
     
     output = {
         'results': simulated_results,
