@@ -3,6 +3,7 @@ model/*/*.cdf
 model/*/*.pickle
 model/results/*.cdf
 model/figures/*/*.png
+*.swp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
