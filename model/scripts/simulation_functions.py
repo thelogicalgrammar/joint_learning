@@ -290,8 +290,12 @@ def simulate_full_experiment(n_trials, n_participants,
         history_choices = []
         history_choices_indices = []
 
-    f = IntProgress(min=0, max=n_participants)
-    display(f) 
+    try:
+        # in case progressbar was not defined
+        f = IntProgress(min=0, max=n_participants)
+        display(f) 
+    except:
+        f = 0
 
     if true_languages_setting == 'half':
         # pick a random true language
