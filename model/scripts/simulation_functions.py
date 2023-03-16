@@ -4,7 +4,9 @@ import itertools as it
 try:
     from IPython.display import display
     from ipywidgets import IntProgress
+    displaybar = True
 except ImportError:
+    displaybar = False
     print("Couldn't import progress bar stuff. Fine if you're just fitting model")
 
 
@@ -233,8 +235,9 @@ def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, negat
         word_orders, language_interpret
     )
     
-    f = IntProgress(min=0, max=n)
-    display(f)
+    if displaybar:
+        f = IntProgress(min=0, max=n)
+        display(f)
 
     histories = []
     for i in range(n):
@@ -257,7 +260,8 @@ def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, negat
                 negative_evidence
             )[0]
         )
-        f.value += 1
+        if displaybar:
+            f.value += 1
     return histories
 
 
@@ -290,12 +294,10 @@ def simulate_full_experiment(n_trials, n_participants,
         history_choices = []
         history_choices_indices = []
 
-    try:
+    if displaybar:
         # in case progressbar was not defined
         f = IntProgress(min=0, max=n_participants)
-        display(f) 
-    except:
-        f = 0
+        display(f)
 
     if true_languages_setting == 'half':
         # pick a random true language
@@ -374,8 +376,9 @@ def simulate_full_experiment(n_trials, n_participants,
                     i_scenes_trials == np.array(h_choices)[:,None]
                 )[:,1]
             )
-
-        f.value += 1
+            
+        if displaybar:
+            f.value += 1
 
     # transform into numpy arrays AND reshuffle 
     # so trial is first dimension (which is needed below when using `scan`)
