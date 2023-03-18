@@ -56,8 +56,9 @@ if __name__=='__main__':
         # basepath = "/mnt/c/Users/faust/Documents/joint_learning/param_recovery/"
         basepath = './param_recovery/'
 
-        summaries = list()
-        for filepath in glob(basepath+'*.pickle'):
+        for i, filepath in enumerate(glob(basepath+'*.pickle')):
+
+            print('Doing file ', filepath)
 
             with open(filepath, 'rb') as openfile:
                 ex = pickle.load(openfile)
@@ -70,13 +71,11 @@ if __name__=='__main__':
                 'recovered_hyper_ms': ex['samples'].posterior
             }
 
-            summaries.append(summary)
-
-        with open(basepath+'summaries.pickle', 'wb') as openfile:
-            pickle.dump(
-                summaries,
-                openfile
-            )
+            with open(basepath+f'summaries_{i}.pickle', 'wb') as openfile:
+                pickle.dump(
+                    summary,
+                    openfile
+                )
     else:
         weight_model_fit.simulate_parameter_recovery(
             n_trials=args.n_trials,
