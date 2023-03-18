@@ -68,7 +68,7 @@ if __name__=='__main__':
 
             summary = {
                 'true_hyper_ms': ex['data'], 
-                'recovered_hyper_ms': ex['samples'].posterior
+                'recovered_hyper_ms': ex['samples'].posterior.drop('probs_orders')
             }
 
             with open(basepath+f'summaries_{i}.pickle', 'wb') as openfile:
