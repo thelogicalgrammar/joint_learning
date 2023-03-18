@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=single
 #SBATCH --ntasks=4
-#SBATCH --mem=8gb
+#SBATCH --mem=16gb
 #SBATCH --time 100:00:00
 
 # This script should be run as an array script, e.g.,
