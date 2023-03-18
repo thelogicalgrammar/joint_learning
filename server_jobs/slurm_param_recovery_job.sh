@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --partition=single
 #SBATCH --ntasks=1
-#SBATCH --mem=8gb
+#SBATCH --mem=16gb
 #SBATCH --time 10:00:00
 
 # This script should be run as an array script, e.g.,
+# 8 gb is enough for variaiotnal inference
 # sbatch --array=0-50 slurm_param_recovery_job.sh
 
 module load devel/miniconda/3
