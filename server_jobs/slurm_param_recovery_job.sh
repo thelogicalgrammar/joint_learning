@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --partition=single
-#SBATCH --ntasks=1
+#SBATCH --ntasks=4
 #SBATCH --mem=8gb
-#SBATCH --time 30:00:00
+#SBATCH --time 100:00:00
 
 # This script should be run as an array script, e.g.,
 # 8 gb is enough for variaiotnal inference
