@@ -2,7 +2,7 @@ from model.scripts import weight_model_fit
 import argparse
 from pprint import pprint
 import pickle
-import glob
+from glob import glob
 
 parser = argparse.ArgumentParser(
     prog = 'Run parameter recovery simulations',
