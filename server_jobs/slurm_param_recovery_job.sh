@@ -16,5 +16,6 @@ conda activate joint_learning
 cd ../
 
 echo "Starting python job"
-python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID
-# python -m server_jobs.parameter_recovery_simulations --n 1
+# python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID
+# python -m server_jobs.parameter_recovery_simulations --n 1 --method 'hmc' 
+python -m server_jobs.parameter_recovery_simulations --extract_symmary true
