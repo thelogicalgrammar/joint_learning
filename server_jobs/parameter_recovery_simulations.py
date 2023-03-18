@@ -71,8 +71,13 @@ if __name__=='__main__':
             }
 
             summaries.append(summary)
-    else:
 
+        with open(basepath+'summaries.pickle', 'wb') as openfile:
+            pickle.dump(
+                summaries,
+                openfile
+            )
+    else:
         weight_model_fit.simulate_parameter_recovery(
             n_trials=args.n_trials,
             n_participants=args.n_participants, 
