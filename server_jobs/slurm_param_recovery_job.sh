@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=single
 #SBATCH --ntasks=1
-#SBATCH --mem=16gb
+#SBATCH --mem=8gb
 #SBATCH --time 10:00:00
 
 # This script should be run as an array script, e.g.,
@@ -17,6 +17,7 @@ conda activate joint_learning
 cd ../
 
 echo "Starting python job"
-# python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID
-# python -m server_jobs.parameter_recovery_simulations --n 1 --method 'hmc' 
-python -m server_jobs.parameter_recovery_simulations --extract_summary true
+# python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID --method 'variational'
+# python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID --method 'hmc'
+python -m server_jobs.parameter_recovery_simulations --n 1 --method 'hmc' 
+# python -m server_jobs.parameter_recovery_simulations --extract_summary true

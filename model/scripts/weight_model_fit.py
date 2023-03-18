@@ -542,7 +542,7 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
             )
 
         ####### Define priors
-                    
+        
         if hierarchical_order_prior:
             
             # sample population-level hyperprior
@@ -717,7 +717,7 @@ def prior_predictive_sample(n_trials, n_participants, factory_kwargs=None):
     
     if factory_kwargs is None:
         factory_kwargs = {
-            'save_probs_order': True,
+            'save_probs_order': False,
             'hierarchical_order_prior': True,
             'hierarchicallearningweights': True,
             'softmax_choice': True
@@ -758,7 +758,7 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
     """
     
     factory_kwargs = {
-        'save_probs_order': True,
+        'save_probs_order': False,
         'hierarchical_order_prior': True,
         'hierarchicallearningweights': True,
         'softmax_choice': True
@@ -814,7 +814,9 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
         
         with ppc_model:
             ppc_samples = pm.sample(
-                return_inferencedata=True
+                return_inferencedata=True,
+                tune=1000,
+                draws=1000,
             )
         
         output['samples'] = ppc_samples
