@@ -18,6 +18,6 @@ cd ../
 
 echo "Starting python job"
 # python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID --method 'variational'
-# python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID --method 'hmc'
-python -m server_jobs.parameter_recovery_simulations --n 1 --method 'hmc' --n_participants 100 --n_trials 100
+python -m server_jobs.parameter_recovery_simulations --n $SLURM_ARRAY_TASK_ID --method 'hmc' --n_participants 100 --n_trials 100
+# python -m server_jobs.parameter_recovery_simulations --n 1 --method 'hmc' --n_participants 100 --n_trials 100
 # python -m server_jobs.parameter_recovery_simulations --extract_summary true
