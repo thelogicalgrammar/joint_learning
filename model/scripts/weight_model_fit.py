@@ -1096,7 +1096,7 @@ if __name__=='__main__':
     get_and_fit_data(
         participant_exclusion=True, 
         method='hmc',
-        first_n_trials=100,
+        # first_n_trials=100,
         fit_kwargs={
             'draws': 10,
             'tune': 10,
