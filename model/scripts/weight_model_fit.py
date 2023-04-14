@@ -6,24 +6,35 @@ import pickle
 from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
 from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
 
-try:
+
+import subprocess
+import sys
+
+reqs = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'])
+installed_packages = [
+    r.decode().split('==')[0] 
+    for r in reqs.split()
+]
+
+if 'pymc3' in installed_packages:
+    print("Pymc3 found")
     import pymc3 as pm
     import theano
     import theano.tensor as tt
-    tprint = theano.printing.Print
-except ImportError:
-    try:
-        print("Pymc3 not found, trying pymc v4 instead")
-        import pymc as pm
-        import aesara as theano
-        import aesara.tensor as tt
-        tprint = theano.printing.Print
-    except ImportError:
-        print("Pymc v4 not found, trying pymc v5")
-        import pymc as pm
-        import pytensor as theano
-        import pytensor.tensor as tt
-        tprint = theano.printing.Print
+elif 'aesara' in installed_packages:
+    print("Aesara found, import pymc v4")
+    import pymc as pm
+    import aesara as theano
+    import aesara.tensor as tt
+elif 'pytensor' in installed_packages:
+    print("Pymc v4 not found, trying pymc v5")
+    import pymc as pm
+    import pytensor as theano
+    import pytensor.tensor as tt
+else:
+    raise ImportError("No pymc3, pymc4 or pymc5 found")
+
+tprint = theano.printing.Print
 
 print("Beginning: Using this version of pymc: ", pm.__version__)
 
@@ -854,16 +865,7 @@ def get_and_fit_data(participant_exclusion=True,
     )
     
     print('Got and wrangled the data')
-    try:
-        # For some reasons pymc wasn't loaded here!
-        import pymc3 as pm
-        import theano
-        import theano.tensor as tt
-        tprint = theano.printing.Print
-        print("Using this version of pymc: ", pm.__version__)
-    except ModuleNotFoundError:
-        print("Pymc3 not found")
-    
+
     if first_n_trials is not None:
         print(f'Getting only the first {first_n_trials} trials')
         analysis_arrays = get_first_n_trials(
