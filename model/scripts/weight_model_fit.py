@@ -1104,7 +1104,8 @@ if __name__=='__main__':
             'hierarchicallearningweights': False,
             'softmax_choice': True
         },
-        datapath="../michael_data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv"
+        # datapath="../michael_data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv"
+	datapath="../../data.csv"
     )
     
     # get_and_fit_data(
