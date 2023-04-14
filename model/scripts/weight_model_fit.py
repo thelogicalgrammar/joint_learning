@@ -1004,47 +1004,47 @@ def get_and_fit_data(participant_exclusion=True,
                 )
                 print('Saved samples in results folder')
 
-    elif method=='jax':
+    # elif method=='jax':
         
-        ##### TODO! Does not work yet!
+    #     ##### TODO! Does not work yet!
         
-        print('Using jax')
+    #     print('Using jax')
 
-        # Override imports above since we're gonna need
-        # pymc v4 if we use JAX
-        import pymc as pm
-        import aesara as theano
-        import aesara.tensor as tt
-        tprint = theano.printing.Print
+    #     # Override imports above since we're gonna need
+    #     # pymc v4 if we use JAX
+    #     import pymc as pm
+    #     import aesara as theano
+    #     import aesara.tensor as tt
+    #     tprint = theano.printing.Print
 
-        import jax
-        import jax.numpy as jnp
-        import jax.scipy as jsp
-        import pymc.sampling_jax
-        from aesara.link.jax.dispatch import jax_funcify
+    #     import jax
+    #     import jax.numpy as jnp
+    #     import jax.scipy as jsp
+    #     import pymc.sampling_jax
+    #     from aesara.link.jax.dispatch import jax_funcify
 
 
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
+    #     try:
+    #         trace = az.from_netcdf(
+    #             outputfile_name
+    #         )
+    #         print("Already found a file with that name, got from file")
             
-        except FileNotFoundError:
-            with model:
-                if fit_kwargs is None:
-                    fit_kwargs = {
-                        'draws': 2000, 
-                    }
-                trace = sampling_jax.sample_numpyro_nuts(
-                    **fit_kwargs
-                )
-            if save:
-                az.to_netcdf(
-                    trace, 
-                    outputfile_name
-                )
-                print('Saved samples in results folder')
+    #     except FileNotFoundError:
+    #         with model:
+    #             if fit_kwargs is None:
+    #                 fit_kwargs = {
+    #                     'draws': 2000, 
+    #                 }
+    #             trace = sampling_jax.sample_numpyro_nuts(
+    #                 **fit_kwargs
+    #             )
+    #         if save:
+    #             az.to_netcdf(
+    #                 trace, 
+    #                 outputfile_name
+    #             )
+    #             print('Saved samples in results folder')
 
     elif method=='map':
         try:
