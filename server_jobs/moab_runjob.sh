@@ -13,6 +13,6 @@ pwd
 
 echo "Submitting job..."
 
-echo 'python -m main --cores 1 --tune 1 --draws 1' | qsub -l 'walltime=70:00:00,mem=8gb'
+echo 'python -m main --cores 1 --tune 1 --draws 1' | qsub -l 'walltime=70:00:00,mem=8gb' -cwd
 
 echo "Submitted job!"
