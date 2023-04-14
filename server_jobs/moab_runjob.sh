@@ -7,10 +7,6 @@ source deactivate
 echo "Activating joint_learning environment"
 source activate joint_learning
 
-# print current directory
-echo "Current directory:"
-pwd
-
 echo "Submitting job..."
 qsub -l 'walltime=70:00:00,mem=8gb' ${PWD}/moab_runmain.sh
 echo "Submitted job!"
