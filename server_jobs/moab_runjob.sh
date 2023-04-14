@@ -7,7 +7,7 @@ source conda deactivate
 echo "Activating joint_learning environment"
 source activate joint_learning
 
-cd ../model/
+cd ../model/scripts
 echo "Submitting job..."
 echo 'python -m server_jobs.main --cores 4 --tune 1 --draws 1' | qsub -l 'walltime=70:00:00,mem=8gb'
 
