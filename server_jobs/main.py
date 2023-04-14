@@ -1,4 +1,5 @@
 from model.scripts import weight_model_fit
+import os
 import argparse
 from pprint import pprint
 
@@ -82,6 +83,9 @@ parser.add_argument(
 )
 
 if __name__=='__main__':
+
+    # print pwd
+    print('pwd: ', os.getcwd())
 
     args = parser.parse_args()
 
