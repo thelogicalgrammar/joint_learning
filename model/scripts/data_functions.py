@@ -162,15 +162,14 @@ def get_analysis_arrays(data, exclude_nonimproving_participants=True):
     ).reset_index(drop=True)
 
 	data_interpretation_help[data_interpretation_help.columns['rank_partic'] = (
-        data_interpretation_fs['rank_partic']
-    )
+	    data_interpretation_fs['rank_partic']
+	)
 
-	data_interpretation_help[data_interpretation_help.columns['meaning'] = (
+    data_interpretation_help[data_interpretation_help.columns['meaning'] = (
         data_interpretation_help['meaning']
         .replace(object_to_index_dict)
     )
-	data_interpretation_help[data_interpretation_help.columns['word'] = (
-    data_interpretation_help.loc[:,'word'] = (
+    data_interpretation_help[data_interpretation_help.columns['word'] = (
         data_interpretation_help['word']
         .replace(word_to_index_dict)
     )
