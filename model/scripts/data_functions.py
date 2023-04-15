@@ -2,7 +2,11 @@ import pandas as pd
 import numpy as np
 from re import split
 from copy import deepcopy
-from scipy.stats import rankdata, binomtest
+from scipy.stats import rankdata
+try:
+    from scipy.stats import binomtest
+except ImportError:
+    from scipy.stats import binom_test
 
 def get_data(datapath=None):
 

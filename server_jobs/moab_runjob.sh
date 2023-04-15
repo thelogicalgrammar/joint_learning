@@ -2,7 +2,7 @@ echo "Importing anaconda module if not already available"
 module load anaconda3/4.3.0 || true
 
 echo "Deactivating environment if one was activated"
-source deactivate
+# source deactivate
 
 echo "Activating joint_learning environment"
 source activate pymc_env
