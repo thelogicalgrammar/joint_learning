@@ -4,4 +4,7 @@ cd /project/3017068.03/fausto/joint_learning/
 echo "Current directory:"
 pwd
 
-python -m server_jobs.main --cores 1 --tune 1 --draws 1
+# Call the main script with unbuffered output 
+# so that the output is printed to the log file
+# immediately
+python -u -m server_jobs.main --cores 4 --tune 500 --draws 500
