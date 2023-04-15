@@ -5,7 +5,7 @@ echo "Deactivating environment if one was activated"
 # source deactivate
 
 echo "Activating joint_learning environment"
-source activate pymc_env
+source activate pymc_env2
 
 echo "Submitting job..."
 qsub -l 'walltime=70:00:00,mem=8gb' ${PWD}/moab_runmain.sh
