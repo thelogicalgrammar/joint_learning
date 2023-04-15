@@ -161,7 +161,7 @@ def get_analysis_arrays(data, exclude_nonimproving_participants=True):
         columns=['meaning', 'word']
     ).reset_index(drop=True)
 
-	data_interpretation_help[data_interpretation_help.columns['rank_partic'] = (
+    data_interpretation_help[data_interpretation_help.columns['rank_partic'] = (
 	    data_interpretation_fs['rank_partic']
 	)
 
