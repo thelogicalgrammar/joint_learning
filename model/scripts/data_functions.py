@@ -191,9 +191,9 @@ def get_analysis_arrays(data, exclude_nonimproving_participants=True):
     # assign 1 to the right combinations
     # of word and meaning
     interpretation_fs_partic[
-        data_interpretation_help['rank_partic'],
-        data_interpretation_help['word'],
-        data_interpretation_help['meaning']
+        data_interpretation_help['rank_partic'].astype(int),
+        data_interpretation_help['word'].astype(int),
+        data_interpretation_help['meaning'].astype(int)
     ] = 1
     
     #### Making `scenes_trials`

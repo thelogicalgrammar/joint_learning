@@ -82,6 +82,13 @@ parser.add_argument(
     help='String to append to the end of the stored trace'
 )
 
+parser.add_argument(
+    '--save_path',
+    default='results/',
+    type=str,
+    help='where to save results'
+)
+
 if __name__=='__main__':
 
     # print pwd
@@ -107,4 +114,5 @@ if __name__=='__main__':
         },
         datapath=args.datapath,
         outputfile_append=args.outputfile_append,
+        save_path=args.save_path
     )

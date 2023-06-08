@@ -96,7 +96,7 @@ def update_weights(interpretation_weights_original, word_order_weights_original,
     return interpretation_weights, word_order_weights
 
 
-##################### PyMC3 
+##################### PyMC
 
 def theano_normalize(tensor, axis):
     return tensor / tensor.sum(axis, keepdims=True)
@@ -721,7 +721,9 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
     return model
 
 
-def prior_predictive_sample(n_trials, n_participants, factory_kwargs=None):
+def prior_predictive_sample(n_trials, n_participants, 
+                            factory_kwargs=None,
+                            sampler_kwargs=dict()):
     """
     Take prior predictive samples, i.e., run simulated experiment
     """
@@ -756,7 +758,10 @@ def prior_predictive_sample(n_trials, n_participants, factory_kwargs=None):
     )
 
     with model:
-        simulated_data = pm.sample_prior_predictive(samples=1)
+        simulated_data = pm.sample_prior_predictive(
+            samples=1,
+            **sampler_kwargs
+        )
     
     return simulated_results, simulated_data
 
@@ -991,7 +996,8 @@ def get_and_fit_data(participant_exclusion=True,
             with model:
                 if fit_kwargs is None:
                     fit_kwargs = {
-                        'draws': 2000, 
+                        'tune': 2,
+                        'draws': 2, 
                         'return_inferencedata':True
                     }
                 trace = pm.sample(
@@ -1004,47 +1010,36 @@ def get_and_fit_data(participant_exclusion=True,
                 )
                 print('Saved samples in results folder')
 
-    # elif method=='jax':
+    elif method=='jax':
         
-    #     ##### TODO! Does not work yet!
+        ##### TODO! Does not work yet!
         
-    #     print('Using jax')
-
-    #     # Override imports above since we're gonna need
-    #     # pymc v4 if we use JAX
-    #     import pymc as pm
-    #     import aesara as theano
-    #     import aesara.tensor as tt
-    #     tprint = theano.printing.Print
-
-    #     import jax
-    #     import jax.numpy as jnp
-    #     import jax.scipy as jsp
-    #     import pymc.sampling_jax
-    #     from aesara.link.jax.dispatch import jax_funcify
-
-
-    #     try:
-    #         trace = az.from_netcdf(
-    #             outputfile_name
-    #         )
-    #         print("Already found a file with that name, got from file")
+        print('Using jax')
+        # Override imports above since we're gonna need
+        # pymc v4 if we use JAX
+        from pymc.sampling.jax import sample_numpyro_nuts
+        
+        try:
+            trace = az.from_netcdf(
+                outputfile_name
+            )
+            print("Already found a file with that name, got from file")
             
-    #     except FileNotFoundError:
-    #         with model:
-    #             if fit_kwargs is None:
-    #                 fit_kwargs = {
-    #                     'draws': 2000, 
-    #                 }
-    #             trace = sampling_jax.sample_numpyro_nuts(
-    #                 **fit_kwargs
-    #             )
-    #         if save:
-    #             az.to_netcdf(
-    #                 trace, 
-    #                 outputfile_name
-    #             )
-    #             print('Saved samples in results folder')
+        except FileNotFoundError:
+            with model:
+                if fit_kwargs is None:
+                    fit_kwargs = {
+                        'draws': 20, 
+                    }
+                trace = sample_numpyro_nuts(
+                    **fit_kwargs
+                )
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved samples in results folder')
 
     elif method=='map':
         try:
