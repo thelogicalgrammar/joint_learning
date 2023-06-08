@@ -76,7 +76,7 @@ Steps:
 		- `-v $(realpath ./ch_data):<absolute/path/to/results/folder`:
 			- This option binds the local directory ./ch_data (after resolving its real path using realpath) to the directory /var/lib/clickhouse/ in the Docker container. This allows the container to access and manipulate data in the specified local directory, essentially using it as a data volume.
 			- NOTE: Make sure you have writing auth for the results folder, or an error will be raised.
-		- `--network=host:
+		- `--network=host`:
 			- This option connects the container to the host network, meaning the container can access network resources just as the host machine does.
 		- `--name some-clickhouse-server`:
 			- This assigns the name some-clickhouse-server to the container. This is useful for managing containers later, for example when stopping or starting the container.

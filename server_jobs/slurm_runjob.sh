@@ -17,5 +17,4 @@ cd ../
 
 echo "Venv activated, starting python job"
 
-
-python -m server_jobs.main --cores 32 --tune 900 --draws 200
+python -m server_jobs.main --method metropolis --cores 4 --tune 1000 --draws 1500

@@ -1009,6 +1009,31 @@ def get_and_fit_data(participant_exclusion=True,
                     outputfile_name
                 )
                 print('Saved samples in results folder')
+                
+    elif method=='metropolis':
+        try:
+            trace = az.from_netcdf(
+                outputfile_name
+            )
+            print("Already found a file with that name, got from file")
+            
+        except FileNotFoundError:
+            with model:
+                if fit_kwargs is None:
+                    fit_kwargs = {
+                        'tune': 2,
+                        'draws': 2, 
+                    }
+                trace = pm.sample(
+                    **fit_kwargs,
+                    step=pm.Metropolis(),
+                )
+            if save:
+                az.to_netcdf(
+                    trace, 
+                    outputfile_name
+                )
+                print('Saved samples in results folder')
 
     elif method=='jax':
         

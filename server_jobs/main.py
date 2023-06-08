@@ -17,7 +17,7 @@ parser.add_argument(
 
 parser.add_argument(
     '--method',
-    choices=['hmc', 'variational', 'jax'],
+    choices=['hmc', 'variational', 'jax', 'metropolis'],
     default='hmc',
     type=str,
     help='Method of model fitting.'
