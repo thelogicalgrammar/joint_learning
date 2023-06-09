@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 *.pickle
 data.csv
+results/method-metropolis_excluded-True_trialsupto-alldraws-4-_tune-4-_cores-4.cdf

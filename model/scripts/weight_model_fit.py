@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import arviz as az
 import pickle
+import os
 
 from .simulation_functions import define_objects, normalize, simulate_full_experiment, define_objects
 from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
@@ -991,6 +992,9 @@ def get_and_fit_data(participant_exclusion=True,
                 outputfile_name
             )
             print("Already found a file with that name, got from file")
+
+        def flush(*args, **kwargs):
+            sys.stdout.flush()
             
         except FileNotFoundError:
             with model:
@@ -1002,6 +1006,8 @@ def get_and_fit_data(participant_exclusion=True,
                     }
                 trace = pm.sample(
                     **fit_kwargs,
+                    # flush print
+                    callback=flush
                 )
             if save:
                 az.to_netcdf(
