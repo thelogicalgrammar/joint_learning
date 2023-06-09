@@ -8,5 +8,5 @@ echo "Activating joint_learning environment"
 source activate pymc_env2
 
 echo "Submitting job..."
-qsub -l 'walltime=70:00:00,mem=8gb' ${PWD}/moab_runmain.sh
+qsub -l 'walltime=70:00:00,mem=16gb' ${PWD}/moab_runmain.sh
 echo "Submitted job!"

@@ -7,4 +7,4 @@ pwd
 # Call the main script with unbuffered output 
 # so that the output is printed to the log file
 # immediately
-python -u -m server_jobs.main --cores 4 --tune 500 --draws 500
+python -u -m server_jobs.main --cores 4 --tune 1000 --draws 1000
