@@ -993,10 +993,11 @@ def get_and_fit_data(participant_exclusion=True,
             )
             print("Already found a file with that name, got from file")
 
-        def flush(*args, **kwargs):
-            sys.stdout.flush()
-            
         except FileNotFoundError:
+
+            def flush(*args, **kwargs):
+                sys.stdout.flush()
+            
             with model:
                 if fit_kwargs is None:
                     fit_kwargs = {
