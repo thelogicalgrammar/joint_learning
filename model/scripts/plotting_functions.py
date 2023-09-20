@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import seaborn as sns
-import pymc3 as pm
+import pymc as pm
 import matplotlib.pyplot as plt
 import os
 
@@ -72,6 +72,19 @@ def plot_posterior_predictive(model, trace, analysis_arrays,
             posterior_pred = pm.sample_posterior_predictive(
                 trace
             )
+            
+    pps_chosen = (
+        posterior_pred
+        .posterior_predictive
+        ['chosen_scenes']
+        .values
+    )
+    
+    # dimensions: (sample, trial, participan)
+    pps_chosen = (
+        pps_chosen
+        .reshape(-1, *pps_chosen.shape[-2:])
+    )
 
     for i in range(data_df['participant'].max()+1):
         
@@ -81,7 +94,7 @@ def plot_posterior_predictive(model, trace, analysis_arrays,
             print(f'{filename} exists, going to next')
             continue
             
-        predictions = posterior_pred['chosen_scenes'][:,:,i]
+        predictions = pps_chosen[:,:,i]
         actual = data_df[data_df['participant']==i]
 
         sample, trial = np.indices(predictions.shape)
@@ -103,7 +116,7 @@ def plot_posterior_predictive(model, trace, analysis_arrays,
             errwidth=1,
             capsize=0.5,
             palette={True: 'green', False: 'red'},
-            legend=False,
+            # legend=False,
             ax=ax
         )
         ax.legend().set_visible(False)
