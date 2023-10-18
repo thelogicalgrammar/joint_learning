@@ -10,6 +10,7 @@
 # source ../../virtualenv/bin/activate
 
 #### snellius UvA setup
+module load 2022
 module load Python/3.10.4-GCCcore-11.3.0-bare
 module load Mamba/4.14.0-0
 
