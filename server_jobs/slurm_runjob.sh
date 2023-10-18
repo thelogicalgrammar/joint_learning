@@ -4,9 +4,15 @@
 #SBATCH --mail-user=fausto.carcassi@gmail.com
 #SBATCH -t 99:00:00
 
-module load 2021
-module load Python/3.9.5-GCCcore-10.3.0
-source ../../virtualenv/bin/activate
+#### Tubingen setup
+# module load 2021
+# module load Python/3.9.5-GCCcore-10.3.0
+# source ../../virtualenv/bin/activate
+
+#### snellius UvA setup
+module load Python/3.10.4-GCCcore-11.3.0-bare
+module load Mamba/4.14.0-0
+mamba activate joint_learning
 
 cd ../
 
@@ -17,4 +23,5 @@ cd ../
 
 echo "Venv activated, starting python job"
 
-python -m server_jobs.main --method metropolis --cores 4 --tune 1000 --draws 1500
+# python -m server_jobs.main --method metropolis --cores 4 --tune 1000 --draws 1500
+python -m server_jobs.main --cores 4 --tune 1000 --draws 1000 --uniform_word_orders_prior true
