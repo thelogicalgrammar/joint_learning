@@ -10,4 +10,4 @@ OUTPUTFILE="server_jobs/output_$PBS_JOBID.txt"
 # Call the main script with unbuffered output 
 # so that the output is printed to the log file
 # immediately
-python -u -m server_jobs.main --cores 4 --tune 1000 --draws 1000 | tee $OUTPUTFILE
+python -u -m server_jobs.main --cores 4 --tune 1000 --draws 1000 --uniform_word_orders_prior true | tee $OUTPUTFILE

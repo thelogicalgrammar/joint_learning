@@ -3,6 +3,18 @@ import os
 import argparse
 from pprint import pprint
 
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
 parser = argparse.ArgumentParser(
     prog = 'Weight model fit',
     description = 'Fits the weight model with the SLURM scheduler'
@@ -11,7 +23,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     '--participant_exclusion',
     default=True,
-    type=bool,
+    type=str2bool,
     help='Whether to run participant exclusion for non-learning participants'
 )
 
@@ -32,14 +44,21 @@ parser.add_argument(
 parser.add_argument(
     '--softmax_choice',
     default=True,
-    type=bool,
+    type=str2bool,
     help='Whether to add softmax estimation for decision'
+)
+
+parser.add_argument(
+    '--uniform_word_orders_prior',
+    default=False,
+    type=str2bool,
+    help='Whether participants all start with a uniform prior'
 )
 
 parser.add_argument(
     '--hierarchicallearningweights',
     default=False,
-    type=bool,
+    type=str2bool,
     help=(
         'Whether to add by-participant hierarchical '
         'structure on learning weights. '
@@ -110,7 +129,8 @@ if __name__=='__main__':
         },
         model_kwargs={
             'hierarchicallearningweights': args.hierarchicallearningweights,
-            'softmax_choice': args.softmax_choice
+            'softmax_choice': args.softmax_choice,
+            'uniform_word_orders_prior': args.uniform_word_orders_prior,
         },
         datapath=args.datapath,
         outputfile_append=args.outputfile_append,

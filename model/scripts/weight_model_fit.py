@@ -496,7 +496,8 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
                                                hierarchicallearningweights=False,
                                                save_probs_order=False,
                                                softmax_choice=True,
-                                               store_p_correct=False):
+                                               store_p_correct=False,
+                                               uniform_word_orders_prior=False):
     """
     Parameters
     ----------
@@ -554,53 +555,60 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
             )
 
         ####### Define priors
-        
-        if hierarchical_order_prior:
+
+        if uniform_word_orders_prior:
             
-            # sample population-level hyperprior
-            # over the individual parameters of the Dirichlet following this: 
-            # http://tdunning.blogspot.com/2010/04/sampling-dirichlet-distribution-revised.html
-            gammas = pm.Gamma(
-                'hyper_gammas',
-                alpha=5,
-                beta=2,
-                dims=('word_order')
-            )
-
-            hyper_alpha = pm.Deterministic(
-                'hyper_alpha',
-                gammas.sum()
-            )
-
-            # this is added just for record 
-            # but not used
-            pm.Deterministic(
-                'hyper_ms',
-                gammas / hyper_alpha,
-                dims=('word_order')
-            )
-
-            # shape (# participants, 6)
-            # dim (participant, word order)
-            word_order_weights = pm.Dirichlet(
-                'word_order_prior', 
-                gammas,
-                dims=('participant', 'word_order')
-            )
+            # define a uniform prior over word
+            # orders for each participant
+            word_order_weights = tt.ones(
+                (n_participants, 6)
+            ) / 6
         
         else:
-            
-            # shape (# participants, 6)
-            # dim (participant, word order)
-            word_order_weights = pm.Dirichlet(
-                'word_order_prior', 
-                [1]*6,
-                dims=('participant', 'word_order')
-            )
-        
+            if hierarchical_order_prior:
+
+                # sample population-level hyperprior
+                # over the individual parameters of the Dirichlet following this: 
+                # http://tdunning.blogspot.com/2010/04/sampling-dirichlet-distribution-revised.html
+                gammas = pm.Gamma(
+                    'hyper_gammas',
+                    alpha=5,
+                    beta=2,
+                    dims=('word_order')
+                )
+
+                hyper_alpha = pm.Deterministic(
+                    'hyper_alpha',
+                    gammas.sum()
+                )
+
+                # this is added just for record 
+                # but not used
+                pm.Deterministic(
+                    'hyper_ms',
+                    gammas / hyper_alpha,
+                    dims=('word_order')
+                )
+
+                # shape (# participants, 6)
+                # dim (participant, word order)
+                word_order_weights = pm.Dirichlet(
+                    'word_order_prior', 
+                    gammas,
+                    dims=('participant', 'word_order')
+                )
+
+            else:
+
+                # shape (# participants, 6)
+                # dim (participant, word order)
+                word_order_weights = pm.Dirichlet(
+                    'word_order_prior', 
+                    [1]*6,
+                    dims=('participant', 'word_order')
+                )
         
         if hierarchicallearningweights:
-            
             
 #             This commented definition of the
 #             hierarchical structure causes an error:
@@ -846,9 +854,14 @@ def simulate_parameter_recovery(n_trials=150, n_participants=150,
 
 
 def get_and_fit_data(participant_exclusion=True,
-                     method='hmc', first_n_trials='all',
-                     fit_kwargs=None, model_kwargs=None, save=True, datapath=None,
-                     outputfile_append='', save_path='results/'):
+                     method='hmc', 
+                     first_n_trials='all',
+                     fit_kwargs=None, 
+                     model_kwargs=None, 
+                     save=True, 
+                     datapath=None,
+                     outputfile_append='', 
+                     save_path='results/'):
     """
     Parameters
     ----------
@@ -882,6 +895,28 @@ def get_and_fit_data(participant_exclusion=True,
     _,_,_, word_orders = define_objects(
         full_output=True
     )
+    
+    added_fit = (
+        '-' 
+        '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
+    ) if fit_kwargs is not None else ''
+    
+    added_model_params = (
+        '-' 
+        '_'.join(f'{v}-{k}' for v,k in model_kwargs.items())
+    ) if model_kwargs is not None else ''
+    
+    outputfile_name = save_path + (
+        f'method-{method}'
+        f'_excluded-{participant_exclusion}'
+        f'_trialsupto-{first_n_trials}'
+        +added_fit
+        +added_model_params
+        +outputfile_append
+        +'.cdf'
+    )
+    
+    print(f"Looking at file with name {outputfile_name}")
 
     if model_kwargs is None:
         model_kwargs = dict()
@@ -896,22 +931,6 @@ def get_and_fit_data(participant_exclusion=True,
     )
     
     print('Built the model')
-    
-    added_fit = (
-        '-' 
-        '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
-    ) if fit_kwargs is not None else ''
-    
-    outputfile_name = save_path+(
-        f'method-{method}'
-        f'_excluded-{participant_exclusion}'
-        f'_trialsupto-{first_n_trials}'
-        +added_fit
-        +outputfile_append
-        +'.cdf'
-    )
-    
-    print(f"Looking at file with name {outputfile_name}")
 
     try:
         print('Checking test point: ')
@@ -1134,7 +1153,7 @@ if __name__=='__main__':
             'softmax_choice': True
         },
         # datapath="../michael_data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv"
-	datapath="../../data.csv"
+        datapath="../../data.csv"
     )
     
     # get_and_fit_data(
