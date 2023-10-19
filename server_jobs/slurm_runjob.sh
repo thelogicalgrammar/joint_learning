@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -n 4
+#SBATCH -c 4
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=fausto.carcassi@gmail.com
 #SBATCH -t 99:00:00
@@ -11,10 +11,12 @@
 
 #### snellius UvA setup
 module load 2022
-module load Python/3.10.4-GCCcore-11.3.0-bare
 module load Mamba/4.14.0-0
 
-/gpfs/admin/_hpc/sw/arch/AMD-ZEN2/RHEL8/EB_production/2022/software/Mamba/4.14.0-0/bin/conda activate joint_learning
+source deactivate
+source activate joint_learning
+
+echo "$(which python)"
 
 cd ../
 
