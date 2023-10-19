@@ -14,7 +14,7 @@ module load 2022
 module load Python/3.10.4-GCCcore-11.3.0-bare
 module load Mamba/4.14.0-0
 
-conda activate joint_learning
+/gpfs/admin/_hpc/sw/arch/AMD-ZEN2/RHEL8/EB_production/2022/software/Mamba/4.14.0-0/bin/conda activate joint_learning
 
 cd ../
 
