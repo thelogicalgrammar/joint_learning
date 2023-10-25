@@ -14,7 +14,7 @@ module load 2022
 module load Mamba/4.14.0-0
 
 source deactivate
-source activate joint_learning
+source activate joint_learning_fixed
 
 echo "$(which python)"
 
@@ -28,4 +28,4 @@ cd ../
 echo "Venv activated, starting python job"
 
 # python -m server_jobs.main --method metropolis --cores 4 --tune 1000 --draws 1500
-python -m server_jobs.main --cores 4 --tune 1000 --draws 1000 --uniform_word_orders_prior true
+python -m server_jobs.main --cores 4 --tune 1000 --draws 1000 --uniform_word_orders_prior true --hierarchicalorderprior false
