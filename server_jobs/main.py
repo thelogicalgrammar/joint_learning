@@ -140,7 +140,7 @@ if __name__=='__main__':
             'hierarchicallearningweights': args.hierarchicallearningweights,
             'softmax_choice': args.softmax_choice,
             'uniform_word_orders_prior': args.uniform_word_orders_prior,
-            'hierarchicalorderprior': args.hierarchicalorderprior,
+            'hierarchical_order_prior': args.hierarchicalorderprior,
         },
         datapath=args.datapath,
         outputfile_append=args.outputfile_append,
