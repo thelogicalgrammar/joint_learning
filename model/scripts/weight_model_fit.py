@@ -896,13 +896,11 @@ def get_and_fit_data(participant_exclusion=True,
         full_output=True
     )
     
-    added_fit = (
-        '-' 
+    added_fit = '_' + (
         '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
     ) if fit_kwargs is not None else ''
     
-    added_model_params = (
-        '-' 
+    added_model_params = '_' + (
         '_'.join(f'{v}-{k}' for v,k in model_kwargs.items())
     ) if model_kwargs is not None else ''
     
@@ -927,6 +925,12 @@ def get_and_fit_data(participant_exclusion=True,
         word_orders,
         analysis_arrays['history_choices_indices'],
         analysis_arrays['scenes_trials'],
+        # hierarchical_order_prior=True,
+        # hierarchicallearningweights=False,
+        # save_probs_order=False,
+        # softmax_choice=True,
+        # store_p_correct=False,
+        # uniform_word_orders_prior=False
         **model_kwargs
     )
     
