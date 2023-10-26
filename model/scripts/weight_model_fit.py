@@ -492,7 +492,7 @@ def probs_languages_to_probs_scenes_multiple_participants(
 
 def factory_weight_model_multiple_participants(true_scenes_trials, signals, word_orders,
                                                history_choices_indices, scenes_trials,
-                                               hierarchical_order_prior=True,
+                                               wo_prior_structure='hierarchical',
                                                hierarchicallearningweights=False,
                                                save_probs_order=False,
                                                softmax_choice=True,
@@ -556,7 +556,7 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
 
         ####### Define priors
 
-        if uniform_word_orders_prior:
+        if wo_prior_structure == 'uniform':
             
             # define a uniform prior over word
             # orders for each participant
@@ -564,49 +564,76 @@ def factory_weight_model_multiple_participants(true_scenes_trials, signals, word
                 (n_participants, 6)
             ) / 6
         
+        elif wo_prior_structure == 'hierarchical':
+
+            # sample population-level hyperprior
+            # over the individual parameters of the Dirichlet following this: 
+            # http://tdunning.blogspot.com/2010/04/sampling-dirichlet-distribution-revised.html
+            gammas = pm.Gamma(
+                'hyper_gammas',
+                alpha=5,
+                beta=2,
+                dims=('word_order')
+            )
+
+            hyper_alpha = pm.Deterministic(
+                'hyper_alpha',
+                gammas.sum()
+            )
+
+            # this is added just for record 
+            # but not used
+            pm.Deterministic(
+                'hyper_ms',
+                gammas / hyper_alpha,
+                dims=('word_order')
+            )
+
+            # shape (# participants, 6)
+            # dim (participant, word order)
+            word_order_weights = pm.Dirichlet(
+                'word_order_prior', 
+                gammas,
+                dims=('participant', 'word_order')
+            )
+
+        elif wo_prior_structure == 'unpooled':
+
+            ### This is for running completely unpooled
+            # as an alternative to hierarchical
+                
+            # shape (# participants, 6)
+            # dim (participant, word order)
+            
+            word_order_weights = pm.Dirichlet(
+                'word_order_prior', 
+                [1]*6,
+                dims=('participant', 'word_order')
+            )
+
+        elif wo_prior_structure == 'pooled':
+
+            ### This is for running completely pooled
+            # as an alternative to hierarchical
+
+            # shape (6)
+            # dim (word order)
+            word_order_weights_pooled = pm.Dirichlet(
+                'word_order_prior',
+                [1]*6,
+                dims=('word_order')
+            )
+
+            # reshape into (# participants, 6)
+            word_order_weights = tt.tile(
+                word_order_weights_pooled,
+                (n_participants, 1)
+            )
+
         else:
-            if hierarchical_order_prior:
-
-                # sample population-level hyperprior
-                # over the individual parameters of the Dirichlet following this: 
-                # http://tdunning.blogspot.com/2010/04/sampling-dirichlet-distribution-revised.html
-                gammas = pm.Gamma(
-                    'hyper_gammas',
-                    alpha=5,
-                    beta=2,
-                    dims=('word_order')
-                )
-
-                hyper_alpha = pm.Deterministic(
-                    'hyper_alpha',
-                    gammas.sum()
-                )
-
-                # this is added just for record 
-                # but not used
-                pm.Deterministic(
-                    'hyper_ms',
-                    gammas / hyper_alpha,
-                    dims=('word_order')
-                )
-
-                # shape (# participants, 6)
-                # dim (participant, word order)
-                word_order_weights = pm.Dirichlet(
-                    'word_order_prior', 
-                    gammas,
-                    dims=('participant', 'word_order')
-                )
-
-            else:
-
-                # shape (# participants, 6)
-                # dim (participant, word order)
-                word_order_weights = pm.Dirichlet(
-                    'word_order_prior', 
-                    [1]*6,
-                    dims=('participant', 'word_order')
-                )
+            raise NotImplementedError(
+                'Requested word order prior structure unknown'
+            )
         
         if hierarchicallearningweights:
             
@@ -861,6 +888,7 @@ def get_and_fit_data(participant_exclusion=True,
                      save=True, 
                      datapath=None,
                      outputfile_append='', 
+                     full_file_name=None,
                      save_path='results/'):
     """
     Parameters
@@ -896,23 +924,29 @@ def get_and_fit_data(participant_exclusion=True,
         full_output=True
     )
     
-    added_fit = '_' + (
-        '_'.join(f'{v}-{k}' for v,k in fit_kwargs.items())
+    added_fit = ',' + (
+        ','.join(f'{v}-{k}' for v,k in fit_kwargs.items())
     ) if fit_kwargs is not None else ''
     
-    added_model_params = '_' + (
-        '_'.join(f'{v}-{k}' for v,k in model_kwargs.items())
+    added_model_params = ',' + (
+        ','.join(f'{v}-{k}' for v,k in model_kwargs.items())
     ) if model_kwargs is not None else ''
-    
-    outputfile_name = save_path + (
-        f'method-{method}'
-        f'_excluded-{participant_exclusion}'
-        f'_trialsupto-{first_n_trials}'
-        +added_fit
-        +added_model_params
-        +outputfile_append
-        +'.cdf'
-    )
+
+    if full_file_name is None:
+        outputfile_name = save_path + (
+            f'method-{method},'
+            f'excluded-{participant_exclusion},'
+            f'trialsupto-{first_n_trials}'
+            +added_fit
+            +added_model_params
+            +outputfile_append
+            +'.cdf'
+        )
+    else:
+        outputfile_name = os.path.join(
+            save_path, 
+            full_file_name
+        )
     
     print(f"Looking at file with name {outputfile_name}")
 
@@ -942,81 +976,62 @@ def get_and_fit_data(participant_exclusion=True,
     except AttributeError:
         print('check_test_point is not defined')
 
-    if method=='variational':
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
-        except FileNotFoundError:
-            if fit_kwargs is None:
-                fit_kwargs = {
-                    'n': 50000
-                }
-
-            with model:
-
-                # advi = pm.ADVI()
-
-                # tracker = pm.callbacks.Tracker(
-                #     mean=advi.approx.mean.eval, 
-                #     std=advi.approx.std.eval,  
-                # )
-
-                # fit = advi.fit(
-                #     callbacks=[tracker],
-                #     **fit_kwargs
-                # )
-
-                fit = pm.fit(
-                    **fit_kwargs
-                )
-
-            # print("Mean: ", tracker['mean'])
-            # print("Std: ", tracker['std'])
-
-#             fig = plt.figure(figsize=(16, 9))
-#             mu_ax = fig.add_subplot(221)
-#             std_ax = fig.add_subplot(222)
-#             hist_ax = fig.add_subplot(212)
-#             mu_ax.plot(tracker["mean"])
-#             mu_ax.set_title("Mean track")
-#             std_ax.plot(tracker["std"])
-#             std_ax.set_title("Std track")
-#             hist_ax.plot(advi.hist)
-#             hist_ax.set_title("Negative ELBO track");
-#             plt.show()
-
-            with model:
-                pmtrace = fit.sample(
-                    1000
-                )
-                trace = az.from_pymc3(
-                    pmtrace
-                )
-
-            if save:
-                try:
-                    az.to_netcdf(
-                        trace, 
-                        outputfile_name
+    try:
+        trace = az.from_netcdf(
+            outputfile_name
+        )
+        print("Found a file with that name, got from file")
+        
+    except FileNotFoundError:
+        
+        if method=='variational':
+    
+                if fit_kwargs is None:
+                    fit_kwargs = {
+                        'n': 50000
+                    }
+    
+                with model:
+    
+                    # advi = pm.ADVI()
+    
+                    # tracker = pm.callbacks.Tracker(
+                    #     mean=advi.approx.mean.eval, 
+                    #     std=advi.approx.std.eval,  
+                    # )
+    
+                    # fit = advi.fit(
+                    #     callbacks=[tracker],
+                    #     **fit_kwargs
+                    # )
+    
+                    fit = pm.fit(
+                        **fit_kwargs
                     )
-                    print('Saved samples in results folder')
-                except PermissionError:
-                    az.to_netcdf(
-                        trace, 
-                        'model/'+outputfile_name
+    
+                with model:
+                    pmtrace = fit.sample(
+                        1000
                     )
-                    print('Saved samples in results folder')
-
-    elif method=='hmc':
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
-
-        except FileNotFoundError:
+                    trace = az.from_pymc3(
+                        pmtrace
+                    )
+    
+                if save:
+                    try:
+                        az.to_netcdf(
+                            trace, 
+                            outputfile_name
+                        )
+                        print('Saved samples in results folder')
+                    except PermissionError:
+                        az.to_netcdf(
+                            trace, 
+                            'model/'+outputfile_name
+                        )
+                        print('Saved samples in results folder')
+    
+        elif method=='hmc':
 
             def flush(*args, **kwargs):
                 sys.stdout.flush()
@@ -1040,14 +1055,8 @@ def get_and_fit_data(participant_exclusion=True,
                 )
                 print('Saved samples in results folder')
                 
-    elif method=='metropolis':
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
-            
-        except FileNotFoundError:
+        elif method=='metropolis':
+
             with model:
                 if fit_kwargs is None:
                     fit_kwargs = {
@@ -1064,23 +1073,16 @@ def get_and_fit_data(participant_exclusion=True,
                     outputfile_name
                 )
                 print('Saved samples in results folder')
-
-    elif method=='jax':
-        
-        ##### TODO! Does not work yet!
-        
-        print('Using jax')
-        # Override imports above since we're gonna need
-        # pymc v4 if we use JAX
-        from pymc.sampling.jax import sample_numpyro_nuts
-        
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
+    
+        elif method=='jax':
             
-        except FileNotFoundError:
+            ##### TODO! Does not work yet!
+            
+            print('Using jax')
+            # Override imports above since we're gonna need
+            # pymc v4 if we use JAX
+            from pymc.sampling.jax import sample_numpyro_nuts
+
             with model:
                 if fit_kwargs is None:
                     fit_kwargs = {
@@ -1095,15 +1097,9 @@ def get_and_fit_data(participant_exclusion=True,
                     outputfile_name
                 )
                 print('Saved samples in results folder')
-
-    elif method=='map':
-        try:
-            trace = az.from_netcdf(
-                outputfile_name
-            )
-            print("Already found a file with that name, got from file")
-            
-        except FileNotFoundError:
+    
+        elif method=='map':
+        
             with model:
                 # technically not a trace
                 trace = pm.find_MAP()
@@ -1119,8 +1115,8 @@ def get_and_fit_data(participant_exclusion=True,
                         'model/'+outputfile_name
                     )
                 print('Saved MAP in results folder')
-    else:
-        raise ValueError('Method not implemented!')
+        else:
+            raise ValueError('Method not implemented!')
         
     return data, analysis_arrays, model, trace
 

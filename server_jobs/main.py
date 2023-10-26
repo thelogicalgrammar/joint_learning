@@ -49,10 +49,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--uniform_word_orders_prior',
-    default=False,
-    type=str2bool,
-    help='Whether participants all start with a uniform prior'
+    '--wo_prior_structure',
+    choices=['uniform', 'hierarchical', 'unpooled', 'pooled'],
+    type=str,
+    help='The structure of the word order prior in the generative model'
 )
 
 parser.add_argument(
@@ -63,15 +63,6 @@ parser.add_argument(
         'Whether to add by-participant hierarchical '
         'structure on learning weights. '
         'NOT WORKING'
-    )
-)
-
-parser.add_argument(
-    '--hierarchicalorderprior',
-    type=str2bool,
-    help=(
-        'Whether to have by-participant hierarchical '
-        'structure on word order priors.'
     )
 )
 
@@ -134,13 +125,12 @@ if __name__=='__main__':
         fit_kwargs={
             'draws': args.draws,
             'tune': args.tune,
-            'cores': args.cores
+            'cores': args.cores,
         },
         model_kwargs={
             'hierarchicallearningweights': args.hierarchicallearningweights,
             'softmax_choice': args.softmax_choice,
-            'uniform_word_orders_prior': args.uniform_word_orders_prior,
-            'hierarchical_order_prior': args.hierarchicalorderprior,
+            'wo_prior_structure': args.wo_prior_structure,
         },
         datapath=args.datapath,
         outputfile_append=args.outputfile_append,
