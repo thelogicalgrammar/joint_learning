@@ -959,12 +959,12 @@ def get_and_fit_data(participant_exclusion=True,
         word_orders,
         analysis_arrays['history_choices_indices'],
         analysis_arrays['scenes_trials'],
-        # hierarchical_order_prior=True,
-        # hierarchicallearningweights=False,
-        # save_probs_order=False,
-        # softmax_choice=True,
-        # store_p_correct=False,
-        # uniform_word_orders_prior=False
+        # hierarchical_order_prior
+        # hierarchicallearningweights
+        # save_probs_order
+        # softmax_choice
+        # store_p_correct
+        # uniform_word_orders_prior
         **model_kwargs
     )
     

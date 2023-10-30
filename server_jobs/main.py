@@ -88,6 +88,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    '--target_accept',
+    default=0.85,
+    type=float,
+    help='Value of the target accept parameter'
+)
+
+parser.add_argument(
     '--datapath',
     default='../data.csv',
     type=str,
@@ -126,6 +133,7 @@ if __name__=='__main__':
             'draws': args.draws,
             'tune': args.tune,
             'cores': args.cores,
+            'target_accept': args.target_accept,
         },
         model_kwargs={
             'hierarchicallearningweights': args.hierarchicallearningweights,
