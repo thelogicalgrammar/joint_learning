@@ -28,4 +28,4 @@ cd ../
 echo "Venv activated, starting python job"
 
 # python -m server_jobs.main --method metropolis --cores 4 --tune 1000 --draws 1500
-python -m server_jobs.main --cores 16 --tune 1000 --target_accept 0.95 --draws 600 --wo_prior_structure 'pooled'
+python -m server_jobs.main --cores 16 --tune 1000 --target_accept 0.95 --draws 500 --wo_prior_structure 'pooled'
