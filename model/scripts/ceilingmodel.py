@@ -119,6 +119,7 @@ if __name__ == "__main__":
             tune        = 2000,
             cores       = 16,
             chains      = 16,
+            mp_ctx      ="spawn"
         )
 
         trace.to_netcdf('./results/cascademodel.cdf')
