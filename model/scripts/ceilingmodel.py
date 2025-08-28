@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     with cascade:
         trace = pm.sample(
-            draws       = 2000,
+            draws       = 1000,
             tune        = 1000,
             cores       = 16,
             chains      = 16,
