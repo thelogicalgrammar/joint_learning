@@ -11,8 +11,6 @@
 
 #### Snellius UvA setup
 module load 2022
-module module load UCX-CUDA/1.12.1-GCCcore-11.3.0-CUDA-11.7.0 
-
 source deactivate
 source activate pymc523
 
