@@ -11,15 +11,15 @@
 
 #### Snellius UvA setup
 module load 2022
-module load Mamba/4.14.0-0
+module module load UCX-CUDA/1.12.1-GCCcore-11.3.0-CUDA-11.7.0 
 
 source deactivate
-source activate joint_learning_fixed
+source activate pymc523
 
 echo "$(which python)"
 
 cd ../
 
-echo "Venv activated, starting python job"
+echo "Env activated, starting python job"
 
-python -m server_jobs.main 
+python -m model.scripts.ceilingmodel
