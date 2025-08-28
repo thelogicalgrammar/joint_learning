@@ -11,6 +11,7 @@
 
 #### Snellius UvA setup
 module load 2022
+conda init
 conda activate pymc523
 echo "$(which python)"s
 cd ../
