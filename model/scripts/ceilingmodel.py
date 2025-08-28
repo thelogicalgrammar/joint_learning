@@ -1,4 +1,4 @@
-from data_functions import get_data, get_analysis_arrays
+from model.scripts.data_functions import get_data, get_analysis_arrays
 import numpy as np
 import pandas as pd
 import pymc as pm
