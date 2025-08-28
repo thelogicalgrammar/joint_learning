@@ -3,7 +3,6 @@
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=fausto.carcassi@gmail.com
 #SBATCH -t 120:00:00
-set -euo pipefail
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate pymc523
