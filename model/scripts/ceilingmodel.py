@@ -75,8 +75,6 @@ def define_model(df):
         grow   = 0.25 + (C_row - 0.25) * ratio**s_row
         p_row  = pm.math.switch(t < T_row, grow, C_row)
 
-        pm.Deterministic('p_row', p_row)
-
         # likelihood 
         pm.Bernoulli("y", p_row, observed=y_obs)
 
@@ -116,7 +114,7 @@ if __name__ == "__main__":
     with cascade:
         trace = pm.sample(
             draws       = 2000,
-            tune        = 2000,
+            tune        = 1000,
             cores       = 16,
             chains      = 16,
             mp_ctx      ="spawn"
