@@ -133,7 +133,7 @@ def define_priors(word_orders, language_interpret):
 ###### The following functions run the perfect Bayesian learner, 
 # but they are here because they're also used below to simulate experiments:
 
-def choose_scene(utterance_by_language, indices_scenes, current_state):
+def choose_scene(utterance_by_language, indices_scenes, current_state, return_p_scene=False):
     """
     Choose a scene based on current posterior
     by sampling with model averaging.
@@ -152,11 +152,14 @@ def choose_scene(utterance_by_language, indices_scenes, current_state):
     # each of the four scenes given the utterance
     p_scene = normalize(p_lang_scene_given_utt, axis=(0,1,2)).sum((0,1))
     chosen_scene = np.random.choice(indices_scenes, p=p_scene)
+    if return_p_scene:
+        return chosen_scene, p_scene
     return chosen_scene
 
 
 def update_knowledge(chosen_scene, true_scene, languages, utterance, 
-                     indices_scenes, current_state, negative_evidence):
+                     indices_scenes, current_state, negative_evidence, 
+                     noise=0, noise_type='uniform'):
     """
     Update current knowledge with Bayesian update
     """
@@ -165,22 +168,47 @@ def update_knowledge(chosen_scene, true_scene, languages, utterance,
         # update current_state to only keep those languages
         # that are compatible with that scene and utterance
         compatible_languages = (languages == utterance).all(-1)[:,:,chosen_scene]
+
     elif negative_evidence:
         # otherwise it's one of the remaining three 
-        # observed scenes
-
+        # observed scenes.
         # Get indices of non chosen scenes
         indices_non_chosen = indices_scenes[indices_scenes!=chosen_scene]
         # Mask for languages that use the seen utterance
         # for any of the non-chosen scenes
         compatible_languages = (languages == utterance).all(-1)[:,:,indices_non_chosen].any(-1)
     else:
+        # if no negative evidence, all languages are compatible
+        # this is effectively the likelihood function
         compatible_languages = np.ones_like(current_state)
-    current_state = normalize(compatible_languages*current_state, axis=(0,1))
+
+    # this is 1 with a probability = noise
+    # when it is 1, it corresponds to a language that is 
+    # incorrectly not considered impossible
+    random_bool = np.random.rand(*compatible_languages.shape) < noise
+
+    if noise_type == 'ignore':
+        likelihood = np.where(
+            compatible_languages,
+            1,
+            random_bool
+        )
+    elif noise_type == 'uniform':
+        likelihood = np.where(
+            compatible_languages,
+            1-noise,
+            noise
+        )
+    else:
+        raise ValueError(f'Noise type {noise_type} not recognized!')
+    
+    current_state = normalize(likelihood*current_state, axis=(0,1))
     return current_state
     
 
-def run_experiment(trials, interpret_prior, word_order_prior, negative_evidence):
+def run_experiment(trials, interpret_prior, word_order_prior, 
+                   negative_evidence, noise, return_p_scene=False, 
+                   noise_type='uniform'):
     
     scenes, languages = define_objects()
     
@@ -194,6 +222,7 @@ def run_experiment(trials, interpret_prior, word_order_prior, negative_evidence)
     # at each timestep
     history_states = [current_state]
     history_choices = []
+    p_scenes = []
     for true_scene, indices_scenes, utterance in zip(*trials):
 
         # get indicator of utterance for each language
@@ -203,12 +232,13 @@ def run_experiment(trials, interpret_prior, word_order_prior, negative_evidence)
         # Which is always 0 or 1
         utterance_by_language = (languages == utterance).all(-1)
 
-        chosen_scene = choose_scene(
+        chosen_scene, p_scene = choose_scene(
             utterance_by_language, 
             indices_scenes, 
-            current_state
+            current_state,
+            return_p_scene=True
         )
-        
+        p_scenes.append(p_scene)
         history_choices.append(chosen_scene)
 
         current_state = update_knowledge(
@@ -218,14 +248,19 @@ def run_experiment(trials, interpret_prior, word_order_prior, negative_evidence)
             utterance, 
             indices_scenes,
             current_state,
-            negative_evidence
+            negative_evidence,
+            noise,
+            noise_type
         )
         history_states.append(current_state)
         
+    if return_p_scene:
+        return history_states, history_choices, p_scenes
     return history_states, history_choices
 
 
-def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, negative_evidence):
+def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, 
+                    negative_evidence, return_p_scene=False):
     
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
@@ -257,7 +292,8 @@ def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, negat
                 trials, 
                 interpret_prior, 
                 word_order_prior,
-                negative_evidence
+                negative_evidence,
+                return_p_scene=return_p_scene
             )[0]
         )
         if displaybar:
@@ -265,8 +301,9 @@ def run_experiments(index_true_lang, interpret_prior, word_order_prior, n, negat
     return histories
 
 
-def simulate_full_experiment(n_trials, n_participants, 
-                             true_languages_setting, simulate_responses):
+def simulate_full_experiment(n_trials, n_participants, true_languages_setting,
+                             simulate_responses, negative_evidence=False,
+                             noise=0, return_p_scene=False, noise_type='uniform'):
     """
     Simulate data from multiple perfeclty bayesian participants
     
@@ -274,7 +311,22 @@ def simulate_full_experiment(n_trials, n_participants,
     ----------
     simulate_responses: bool
         Whether the dependent variable is simulated
+    negative_evidence: bool
+        Whether the participant updates their knowledge
+        when they get the wrong scene (based on the true scene
+        which they see, as in the experiment)
+    noise: float
+        The noise of the Bayesian update
+        (0 means no noise, 1 means full noise)
+    noise_type: str
+        The type of noise to add
+        'uniform': likelihood function is smoothed out
+        'ignore': a language that is excluded by the data is 
+            nonetheless kept to 1 with probability "noise"
     """
+
+    if return_p_scene:
+        assert simulate_responses, "return_p_scene is only available if simulate_responses is True"
 
     scenes, languages, language_interpret, word_orders = define_objects(
         full_output=True
@@ -300,7 +352,8 @@ def simulate_full_experiment(n_trials, n_participants,
         display(f)
 
     if true_languages_setting == 'half':
-        # pick a random true language
+        # pick a random true language,
+        # represented as a tuple of
         # (interpretationfunction, word_order)
         indices_true_language = (
             [
@@ -339,9 +392,16 @@ def simulate_full_experiment(n_trials, n_participants,
     else:
         raise ValueError('Setting unknown!')
 
+    if return_p_scene:
+        history_p_scenes = []
 
     for i in range(n_participants):
 
+        if isinstance(noise, int) or isinstance(noise, float):
+            noise_i = noise
+        else:
+            noise_i = noise[i]
+        
         index_true_language = indices_true_language[i]
 
         trials = generate_trials(
@@ -360,15 +420,25 @@ def simulate_full_experiment(n_trials, n_participants,
         if simulate_responses:
             
             # Run perfect Bayesian learner here
-            h_states, h_choices = run_experiment(
+            output = run_experiment(
                 trials, 
                 interpret_prior, 
                 word_order_prior, 
-                negative_evidence=False
+                negative_evidence=negative_evidence,
+                noise=noise_i,
+                return_p_scene=return_p_scene,
+                noise_type=noise_type
             )
+
+            if return_p_scene:
+                h_states, h_choices, p_scenes = output
+            else:
+                h_states, h_choices = output
 
             history_states.append(h_states)
             history_choices.append(h_choices)
+            if return_p_scene:
+                history_p_scenes.append(p_scenes)
 
             # go from the actual chosen scenes to their indices
             history_choices_indices.append(
@@ -385,6 +455,8 @@ def simulate_full_experiment(n_trials, n_participants,
     true_scenes = np.swapaxes(true_scenes, 0, 1)
     indices_scenes_trials = np.swapaxes(indices_scenes_trials, 0, 1)
     signals = np.swapaxes(signals, 0, 1)
+    if return_p_scene:
+        history_p_scenes = np.swapaxes(history_p_scenes, 0, 1)
 
     scenes_trials = scenes[indices_scenes_trials]
     true_scenes_trials = scenes[true_scenes]
@@ -409,4 +481,10 @@ def simulate_full_experiment(n_trials, n_participants,
             'history_choices': history_choices, 
             'history_choices_indices': history_choices_indices
         })
+
+    if return_p_scene:
+        returndict.update({
+            'history_p_scenes': history_p_scenes
+        })
+    
     return returndict

@@ -4,6 +4,7 @@ import seaborn as sns
 import pymc as pm
 import matplotlib.pyplot as plt
 import os
+from scipy.stats import gaussian_kde
 
 
 def plot_simple_logistic_by_condition(trace, analysis_arrays):
@@ -371,3 +372,101 @@ def plot_participantwise_loglik_differences(analysis_arrays, filename,
         dpi=300
     )
     plt.close(fig)
+
+
+def plot_ppc_bytrial(correct_PPs, wos_partic, observed_correct, figname, wo_names, 
+                     correct_PPs_cmap=['Blues'], ppt_plot_type='kde', alpha=1):
+    """
+    correct_PPs: array{bool} | list{arrays{bool}}
+        Has the simulated responses (right/wrong)
+        Shape (trial, participant,sample)
+    """
+
+    
+    if isinstance(correct_PPs, np.ndarray):
+        correct_PPs = [correct_PPs]
+    
+    fig, axes = plt.subplots(
+        nrows=6,
+        ncols=correct_PPs[0].shape[0],
+        figsize=(4,3.5)
+    )
+    
+    # loop over word orders
+    for order_i, ax_arr in enumerate(axes):
+        
+        # loop over trials
+        for trial_i, ax in enumerate(ax_arr):
+
+            for correct_PP, cmap in zip(correct_PPs,correct_PPs_cmap):
+            
+                # array with shape (observations)
+                # that only contains the 
+                # mean accuracy of the participants
+                # with the relevant word order
+                values = correct_PP[
+                    trial_i,
+                    wos_partic==order_i
+                ].mean(0)
+
+                if ppt_plot_type == 'kde':
+                    kde = gaussian_kde(values)
+                    x_grid = np.linspace(0,1,100)
+                    Z = kde(x_grid)
+                    ax.imshow(
+                        Z[None].T, 
+                        aspect='auto', 
+                        origin='lower', 
+                        extent=[0, 1, min(values), max(values)],
+                        cmap=cmap,
+                        alpha=alpha
+                    )
+                elif ppt_plot_type == 'line':
+                    ax.scatter(
+                        0.5,
+                        values.mean(),
+                        s=1,
+                        c=cmap,
+                        # xmin=0,
+                        # xmax=1,
+                        alpha=alpha
+                    )
+             
+            observed = observed_correct[
+                trial_i,
+                wos_partic==order_i
+            ].mean()
+            
+            ax.scatter(
+                0.5,
+                observed,
+                s=1,
+                c='red',
+                alpha=alpha,
+                # xmin=0,
+                # xmax=1
+                # xmax=kde.get_xbound()[1]
+            )
+            
+            sns.despine(ax=ax,left=True,bottom=True)
+            ax.set_xticks([])
+            ax.set_xlabel('')
+            ax.set_yticks([])
+            ax.set_ylim(0,1)
+            
+        print('done with ', order_i)
+    
+    for ax in axes[:,0]:
+        sns.despine(ax=ax,left=False,bottom=True)
+        ax.set_yticks([0,1])
+    
+    for i,ax in enumerate(axes[:,0]):
+        ax.set_ylabel(wo_names[i])
+    
+    for i,ax in enumerate(axes[-1]):
+        if i%30==0:
+            ax.set_xticks([0])
+            ax.set_xticklabels([i])
+        
+    fig.subplots_adjust(wspace=0,hspace=0.3,top=0.95,bottom=0.1,right=1.0)
+    plt.savefig(f'figures/{figname}.png', dpi=300)

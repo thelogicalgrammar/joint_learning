@@ -766,8 +766,8 @@ def prior_predictive_sample(n_trials, n_participants,
     
     if factory_kwargs is None:
         factory_kwargs = {
-            'save_probs_order': False,
-            'hierarchical_order_prior': True,
+            'save_probs_order': True,
+            'wo_prior_structure': 'hierarchical',
             'hierarchicallearningweights': True,
             'softmax_choice': True
         }

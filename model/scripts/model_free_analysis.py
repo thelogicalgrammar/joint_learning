@@ -5,8 +5,12 @@ import arviz as az
 
 from .data_functions import get_data, get_first_n_trials, get_analysis_arrays
 
+
 def analyse(participant_exclusion=True, first_n_trials='all',
             fit_kwargs=None):
+    """
+    This is the original analysis that just does a logistic regression
+    """
     
     data = get_data()
 
@@ -149,7 +153,9 @@ def analyse(participant_exclusion=True, first_n_trials='all',
 
 if __name__=='__main__':
     
-    analyse(
-        participant_exclusion=False, 
-        first_n_trials='all'
-    )
+    # analyse(
+    #     participant_exclusion=False, 
+    #     first_n_trials='all'
+    # )
+
+    analyse_compare()
