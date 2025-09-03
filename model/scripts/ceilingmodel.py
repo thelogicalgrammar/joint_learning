@@ -146,7 +146,7 @@ if __name__ == "__main__":
     # take command line argument for whether to do prior predictive sampling
     # or parameter recovery
     parser = argparse.ArgumentParser()
-    parser.add_argument('--prior_predictive', action='store_true')
+    parser.add_argument('--prior_predictive', type=str, default='false')
     parser.add_argument('--jobindex', type=int, default=0)
     args = parser.parse_args()
 
@@ -176,7 +176,9 @@ if __name__ == "__main__":
         }
     )
 
-    if args.prior_predictive:
+    if args.prior_predictive == 'true':
         prior_predictive(df)
-    else:
+    elif args.prior_predictive == 'false':
         parameter_recovery(df, args.jobindex)
+    else:
+        raise ValueError(f'Invalid prior predictive argument: {args.prior_predictive}')
