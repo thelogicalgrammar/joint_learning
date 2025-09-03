@@ -1,7 +1,6 @@
 #!/bin/bash -l
 #SBATCH -c 64
 #SBATCH --mail-type=BEGIN,END
-#SBATCH --mail-user=fausto.carcassi@gmail.com
 #SBATCH -t 5:00:00
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -25,5 +24,10 @@ if [ "$prior_predictive" = true ]; then
 else
     for i in {0..64}; do
         python -m model.scripts.ceilingmodel --jobindex $i --prior_predictive false &
+        echo "Submitted job $i"
     done
 fi
+
+# wait for all jobs to finish
+wait
+echo "All jobs finished"
