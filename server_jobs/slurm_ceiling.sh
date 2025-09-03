@@ -13,16 +13,16 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_MAX_THREADS=1
 
-python - <<'PY'
-import os, sys, multiprocessing as mp
-print("Python:", sys.version.split()[0])
-print("Start method:", mp.get_start_method())
-print("Conda env:", os.getenv("CONDA_DEFAULT_ENV"))
-print("OMP:", os.getenv("OMP_NUM_THREADS"))
-print("MKL:", os.getenv("MKL_NUM_THREADS"))
-print("OPENBLAS:", os.getenv("OPENBLAS_NUM_THREADS"))
-PY
+# command line argument to use prior predictive or parameter recovery
+prior_predictive=false
 
 cd ../
-echo "Env activated, starting python job"s
-python -m model.scripts.ceilingmodel
+echo "Env activated, starting python job"
+
+if [ "$prior_predictive" = true ]; then
+    python -m model.scripts.ceilingmodel --prior_predictive true
+else
+    for i in {0..64}; do
+        python -m model.scripts.ceilingmodel --jobindex $i --prior_predictive false
+    done
+fi

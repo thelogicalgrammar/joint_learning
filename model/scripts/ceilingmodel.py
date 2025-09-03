@@ -1,9 +1,17 @@
-from model.scripts.data_functions import get_data, get_analysis_arrays
+try:
+    from model.scripts.data_functions import get_data, get_analysis_arrays
+except ImportError:
+    from scripts.data_functions import get_data, get_analysis_arrays
+
 import numpy as np
 import pandas as pd
 import pymc as pm
 
-def define_model(df):
+from os import makedirs
+import pickle
+import argparse
+
+def define_model(df, include_p_row=False):
     
     # numeric participant and order codes
     pid_codes,  pid_idx   = np.unique(df.partic.values, return_inverse=True)
@@ -75,14 +83,73 @@ def define_model(df):
         grow   = 0.25 + (C_row - 0.25) * ratio**s_row
         p_row  = pm.math.switch(t < T_row, grow, C_row)
 
+        if include_p_row:
+            pm.Deterministic('p_row', p_row)
+
         # likelihood 
         pm.Bernoulli("y", p_row, observed=y_obs)
 
     return cascade
 
 
-if __name__ == "__main__":
+def prior_predictive(df):
     
+    cascade = define_model(df)
+
+    with cascade:
+        trace = pm.sample(
+            draws       = 1000,
+            tune        = 1000,
+            cores       = 16,
+            chains      = 16,
+            mp_ctx      ="spawn"
+        )
+
+        trace.to_netcdf('./results/cascademodel.cdf')
+
+
+def parameter_recovery(df, jobindex):
+
+    cascade = define_model(df)
+
+    advi_samples = 10000
+    posterior_samples = 1000
+
+    with cascade:
+        prior_pred = pm.sample_prior_predictive(samples=1)
+
+    y = prior_pred.prior_predictive['y'].squeeze()
+    new_df = df.copy()
+    new_df['correct'] = y
+    cascade_aux = define_model(new_df, True)
+    with cascade_aux:
+        meanfield = pm.fit(n=advi_samples, method='advi', progressbar=True)
+
+    samples = {}
+    for var in [
+                'mu_log_T', 'mu_log_s', 'mu_logit_C',
+                'sigma_log_T', 'sigma_log_s', 'sigma_logitC',
+                'ord_C', 'ord_s', 'ord_T'
+        ]:
+        samples[var] = meanfield.sample_node(vars(cascade_aux)[var], posterior_samples).eval()
+
+    # create folder
+    makedirs('parameter_recovery', exist_ok=False)
+
+    prior_pred.to_netcdf(f'parameter_recovery/prior_pred_{jobindex}.nc')
+    with open(f'parameter_recovery/pred_samples_{jobindex}.json', 'wb') as f:
+        pickle.dump(samples, f)
+
+
+if __name__ == "__main__":
+
+    # take command line argument for whether to do prior predictive sampling
+    # or parameter recovery
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--prior_predictive', action='store_true')
+    parser.add_argument('--jobindex', type=int, default=0)
+    args = parser.parse_args()
+
     # run from main folder
     data = get_data("../data.csv")
     analysis_arrays = get_analysis_arrays(data)
@@ -109,15 +176,7 @@ if __name__ == "__main__":
         }
     )
 
-    cascade = define_model(df)
-
-    with cascade:
-        trace = pm.sample(
-            draws       = 1000,
-            tune        = 1000,
-            cores       = 16,
-            chains      = 16,
-            mp_ctx      ="spawn"
-        )
-
-        trace.to_netcdf('./results/cascademodel.cdf')
+    if args.prior_predictive:
+        prior_predictive(df)
+    else:
+        parameter_recovery(df, args.jobindex)
