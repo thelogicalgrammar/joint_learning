@@ -112,7 +112,7 @@ def parameter_recovery(df, jobindex):
 
     cascade = define_model(df)
 
-    advi_samples = 10000
+    advi_samples = 50000
     posterior_samples = 1000
 
     with cascade:
@@ -133,11 +133,8 @@ def parameter_recovery(df, jobindex):
         ]:
         samples[var] = meanfield.sample_node(vars(cascade_aux)[var], posterior_samples).eval()
 
-    # create folder
-    makedirs('parameter_recovery', exist_ok=False)
-
-    prior_pred.to_netcdf(f'parameter_recovery/prior_pred_{jobindex}.nc')
-    with open(f'parameter_recovery/pred_samples_{jobindex}.json', 'wb') as f:
+    prior_pred.to_netcdf(f'param_recovery/prior_pred_{jobindex}.nc')
+    with open(f'param_recovery/pred_samples_{jobindex}.json', 'wb') as f:
         pickle.dump(samples, f)
 
 

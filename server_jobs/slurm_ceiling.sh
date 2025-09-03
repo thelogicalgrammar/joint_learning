@@ -1,8 +1,8 @@
 #!/bin/bash -l
-#SBATCH -c 16
+#SBATCH -c 64
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=fausto.carcassi@gmail.com
-#SBATCH -t 120:00:00
+#SBATCH -t 5:00:00
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate pymc523
@@ -14,6 +14,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_MAX_THREADS=1
 
 # command line argument to use prior predictive or parameter recovery
+# Remember to adjust the -c and -t arguments accordingly
 prior_predictive=false
 
 cd ../
@@ -23,6 +24,6 @@ if [ "$prior_predictive" = true ]; then
     python -m model.scripts.ceilingmodel --prior_predictive true
 else
     for i in {0..64}; do
-        python -m model.scripts.ceilingmodel --jobindex $i --prior_predictive false
+        python -m model.scripts.ceilingmodel --jobindex $i --prior_predictive false &
     done
 fi
