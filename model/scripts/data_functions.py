@@ -361,6 +361,7 @@ def get_analysis_arrays(data, exclude_nonimproving_participants=True):
             })
         )
 
+        # get the mask of participants who did not improve
         above_chance = (
             arr.apply(
                 # run one-sided binomial test

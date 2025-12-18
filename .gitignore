@@ -1,3 +1,5 @@
+param_recovery/*.json
+param_recovery/*.nc
 michael_data
 model/*/*.cdf
 model/*/*.pickle
@@ -163,3 +165,4 @@ data.csv
 results/method-metropolis_excluded-True_trialsupto-alldraws-4-_tune-4-_cores-4.cdf
 results/cascademodel.cdf
 results/logisticregression.cdf
+*.cdf

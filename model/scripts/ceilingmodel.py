@@ -6,10 +6,8 @@ except ImportError:
 import numpy as np
 import pandas as pd
 import pymc as pm
-
-from os import makedirs
-import pickle
 import argparse
+
 
 def define_model(df, include_p_row=False):
     
@@ -112,9 +110,6 @@ def parameter_recovery(df, jobindex):
 
     cascade = define_model(df)
 
-    advi_samples = 50000
-    posterior_samples = 1000
-
     with cascade:
         prior_pred = pm.sample_prior_predictive(samples=1)
 
@@ -123,19 +118,10 @@ def parameter_recovery(df, jobindex):
     new_df['correct'] = y
     cascade_aux = define_model(new_df, True)
     with cascade_aux:
-        meanfield = pm.fit(n=advi_samples, method='advi', progressbar=True)
-
-    samples = {}
-    for var in [
-                'mu_log_T', 'mu_log_s', 'mu_logit_C',
-                'sigma_log_T', 'sigma_log_s', 'sigma_logitC',
-                'ord_C', 'ord_s', 'ord_T'
-        ]:
-        samples[var] = meanfield.sample_node(vars(cascade_aux)[var], posterior_samples).eval()
+        trace = pm.sample(tune=1000, draws=1000, chains=2, mp_ctx="spawn")
 
     prior_pred.to_netcdf(f'param_recovery/prior_pred_{jobindex}.nc')
-    with open(f'param_recovery/pred_samples_{jobindex}.json', 'wb') as f:
-        pickle.dump(samples, f)
+    trace.to_netcdf(f'param_recovery/pred_samples_{jobindex}.nc')
 
 
 if __name__ == "__main__":
