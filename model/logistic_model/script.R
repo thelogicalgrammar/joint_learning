@@ -11,7 +11,7 @@ options(mc.cores = parallel::detectCores())
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) ### set wd to current dir
 
-res <- read.csv("results_2021-08-23T12_58_44_175Z_langlearning-v2.csv") ### load results file
+res <- read.csv("../../data/langlearning_v2_anonymized.csv") ### anonymized results file (see data/README.md)
 
 bad.subjects <- names(table(res$Results.index)[table(res$Results.index) < 38]) ### remove xiaochen and bob results
 res <- res[!(res$Results.index %in% bad.subjects),]
@@ -24,7 +24,7 @@ res <- data.frame(lapply(res, function(x) gsub("%2C", " ", x))) ### change html 
 ### note: strings are reduced to lower case and leading/trailing white space removed 
 
 demo <- res %>%
-  filter(condition %in% c("age", "gender", "prolific", 
+  filter(condition %in% c("age", "gender", 
                           "language", "wordOrderBox", "second_language", 
                           "later_language", "notes")) %>%
   select(subject, condition, response) %>%
@@ -33,7 +33,6 @@ demo <- res %>%
   rename(
     age = age,
     gender = gender,
-    prolific = prolific,
     firstL = language,
     order = wordOrderBox,
     secondL = second_language,

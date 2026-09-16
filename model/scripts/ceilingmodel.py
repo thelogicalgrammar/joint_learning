@@ -133,8 +133,7 @@ if __name__ == "__main__":
     parser.add_argument('--jobindex', type=int, default=0)
     args = parser.parse_args()
 
-    # run from main folder
-    data = get_data("../data.csv")
+    data = get_data()          # data/langlearning_v2_anonymized.csv
     analysis_arrays = get_analysis_arrays(data)
 
     word_order_partic = analysis_arrays['word_order_partic'] 

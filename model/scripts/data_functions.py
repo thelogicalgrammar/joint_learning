@@ -11,7 +11,10 @@ except ImportError:
 def get_data(datapath=None):
 
     if datapath is None:
-        datapath = '../michael_data/data/results_2021-08-23T12_58_44_175Z_langlearning-v2.csv'
+        # the anonymized dataset shipped with the repository (see data/README.md)
+        from pathlib import Path
+        datapath = str(Path(__file__).resolve().parents[2] / 'data'
+                       / 'langlearning_v2_anonymized.csv')
 
     raw_data = pd.read_csv(datapath)
 
