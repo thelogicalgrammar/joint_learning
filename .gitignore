@@ -1,12 +1,8 @@
-param_recovery/*.json
-param_recovery/*.nc
-michael_data
-claude_code/
-model/*/*.cdf
-model/*/*.pickle
-model/results/*.cdf
-model/figures/*/*.png
+# raw experiment export (personal data) — never commit; the repo ships data/langlearning_v2_anonymized.csv
+results_2021-08-23T12_58_44_175Z_langlearning-v2.csv
 data.csv
+
+claude_code/
 
 *.swp
 
@@ -164,12 +160,12 @@ cython_debug/
 #.idea/
 *.pickle
 *.npy
-data.csv
-results/method-metropolis_excluded-True_trialsupto-alldraws-4-_tune-4-_cores-4.cdf
-results/cascademodel.cdf
-results/logisticregression.cdf
 *.cdf
 
 # experiment_analysis pipeline outputs (large pickles, generated figures)
 model/experiment_analysis/results/
 model/experiment_analysis/figures/
+
+# editor / assistant settings
+.vscode/
+.claude/
