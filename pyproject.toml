@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jointlearn"
+version = "0.1.0"
+description = "Analyses of the joint word-order / lexicon learning experiment"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["jointlearn", "jointlearn.hmm"]

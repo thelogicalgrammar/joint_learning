@@ -162,10 +162,11 @@ cython_debug/
 *.npy
 *.cdf
 
-# experiment_analysis pipeline outputs (large pickles, generated figures)
-model/experiment_analysis/results/
-model/experiment_analysis/figures/
+# HMM pipeline outputs (large pickles, generated figures)
+analyses/hmm/results/
+analyses/hmm/figures/
 
 # editor / assistant settings
 .vscode/
 .claude/
+jointlearn.egg-info/

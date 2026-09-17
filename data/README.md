@@ -5,8 +5,8 @@ word-learning experiment (386 Prolific participants, 200 trials each, run
 11–23 August 2021 on PCIbex), in PCIbex's long "results" format: one row
 per recorded field, columns `Results index` (participant), `Time`,
 `Counter`, `Hash`, ..., `Type`, `Field name`, `Field value`. All loaders in
-this repository (`model/scripts/data_functions.py`, the R script in
-`model/logistic_model/`, `model/experiment_analysis/data.py`) read this
+this repository (`jointlearn/data.py`, the R script in
+`analyses/model_free/`, `jointlearn/hmm/dataset.py`) read this
 file by default.
 
 It is derived from the raw PCIbex export by `anonymize.py`, which removes
