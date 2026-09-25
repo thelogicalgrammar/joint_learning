@@ -68,7 +68,7 @@ python 07_survival.py
 
 ## SLURM directives reference
 
-- `--partition=gpu` — Snellius A100 GPU partition. For H100 use `--partition=gpu_h100`. For MIG-sliced shares use `--partition=gpu_mig`.
+- `--partition=gpu_a100` — Snellius A100 GPU partition (the old name `gpu` no longer exists). For H100 use `--partition=gpu_h100`. For MIG-sliced shares use `--partition=gpu_mig`. Check the current names with `sinfo -s`.
 - `--gpus-per-node=1` — one GPU per job. The JAX code is single-GPU; more would sit idle.
 - `--cpus-per-task=16` — generous because we set `OMP_NUM_THREADS=1` to avoid oversubscription; spare cores help Python I/O and `numpy` accumulation during sampling.
 - `--time=03:00:00` (fit) / `00:30:00` (infer) — the 14-chain fit should take 35–110 min (see above); raise the limit on the sbatch line if the first ETA printed in the log says otherwise. Snellius `gpu` partition allows up to 5 days.

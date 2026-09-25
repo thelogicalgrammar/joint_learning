@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=param_rec
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu_a100
 #SBATCH --gpus-per-node=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
