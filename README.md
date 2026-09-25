@@ -42,7 +42,7 @@ script needs `tidyverse`, `lme4`, `emmeans`, `tidybayes`.
 
 ```bash
 cd analyses/hmm
-python 01_fit.py                  # ~1 h on a laptop GPU at the production config
+python 01_fit.py                  # ~1 h on a laptop GPU (defaults = the reported configuration)
 python 02_postprocess.py
 python 03_condition_effects.py    # main result
 python 05_ppc.py                  # posterior predictive checks

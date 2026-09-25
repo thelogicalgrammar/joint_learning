@@ -29,9 +29,9 @@ export NUMEXPR_MAX_THREADS=1
 cd ../analyses/hmm
 echo "cwd: $(pwd)"
 
-# Requires results/hierarchical_fit.pkl (from slurm_sampler.sh)
+# Requires results/hierarchical_fit.pkl (from slurm_fit_hierarchical.sh)
 if [ ! -f results/hierarchical_fit.pkl ]; then
-    echo "ERROR: results/hierarchical_fit.pkl not found; run slurm_sampler.sh first"
+    echo "ERROR: results/hierarchical_fit.pkl not found; run slurm_fit_hierarchical.sh first"
     exit 1
 fi
 

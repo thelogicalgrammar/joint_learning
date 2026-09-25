@@ -4,20 +4,20 @@ GPU-backed full-scale run of `01_fit.py` + `02_postprocess.py`. Conda env `pymc5
 
 ## Files
 
-- `slurm_sampler.sh` — hierarchical fit on 1 GPU (gpu partition). ~25 min wall on a laptop RTX 3050 Ti with the per-word belief FFBS (0.12 s per outer iteration x 1200 x 14 chains); the 18 h time limit is a large safety margin. Saves the full joint posterior including `(B, O)` for all 325 participants.
-- `slurm_02_postprocess.sh` — post-process the hierarchical fit into per-participant marginals + PPC. **No MCMC**, just summarises what's in `hierarchical_fit.pkl`. Runs in seconds. (Kept on GPU partition only to share the JAX env; no GPU needed.)
+- `slurm_fit_hierarchical.sh` — hierarchical fit on 1 GPU (gpu partition) at the production configuration (4800 outer iterations, burn-in 1200, thin 12, 14 chains). ~0.08 s per outer iteration on a laptop RTX 3050 Ti, i.e. ~110 min for 14 chains there (the reported 7-chain fit took 55 min); the A100 has not been timed, expect 1.5–3x faster. The 3 h time limit is a safety margin. Saves the full joint posterior including `(B, O)` for all 325 participants.
+- `slurm_infer_per_participant.sh` — post-process the hierarchical fit into per-participant marginals + PPC. **No MCMC**, just summarises what's in `hierarchical_fit.pkl`. Runs in seconds. (Kept on GPU partition only to share the JAX env; no GPU needed.)
 - `slurm_param_recovery.sh` — parameter recovery for the hierarchical fit as an array job: task `k` refits synthetic dataset `k` of `MODE` (`prior`, `null` or `posterior`; see `analyses/hmm/08_param_recovery.py`). Generate the datasets first with `python 08_param_recovery.py simulate --mode $MODE --n_rep 8` (needs `results/hierarchical_fit.pkl`), then `MODE=posterior sbatch slurm_param_recovery.sh`, then `python 08_param_recovery.py analyze --mode $MODE`. Each task takes a few minutes at the recovery defaults (`N_OUTER=1200 BURN=400 THIN=8 N_CHAINS=3`); a re-submitted task resumes from its checkpoints.
 
-The hierarchical fit reads its config from env vars (`N_OUTER`, `N_CHAINS`, etc.) with the local-run defaults built in. The post-process script has no config of its own.
+The hierarchical fit reads its config from env vars (`N_OUTER`, `N_CHAINS`, etc.); the defaults in `sampler.py` are the production configuration with 7 chains, the wrapper raises the chain count to 14. The post-process script has no config of its own.
 
 ## Config (env vars exported by the SLURM scripts)
 
-|                         | local default       | Snellius (full) |
+|                         | `sampler.py` default (= reported fit) | Snellius wrapper |
 |-------------------------|---------------------|-----------------|
 | **hierarchical fit**    |                     |                 |
-| `N_OUTER`               | 600                 | 1200            |
-| `BURN`                  | 200                 | 400             |
-| `THIN`                  | 4                   | 4               |
+| `N_OUTER`               | 4800                | 4800            |
+| `BURN`                  | 1200                | 1200            |
+| `THIN`                  | 12                  | 12              |
 | `N_CHAINS`              | 7                   | 14              |
 | `N_FFBS`                | 1                   | 1               |
 | `N_SWAP`                | 0                   | 0               |
@@ -29,9 +29,9 @@ From the project root on Snellius:
 
 ```bash
 cd slurm
-sbatch slurm_sampler.sh
+sbatch slurm_fit_hierarchical.sh
 # wait for completion (or watch with `squeue -u $USER` / `tail -f hier_fit_<jobid>.out`)
-sbatch slurm_02_postprocess.sh
+sbatch slurm_infer_per_participant.sh
 ```
 
 The inference script auto-checks for `results/hierarchical_fit.pkl` and exits early if it's missing — so you can submit both jobs in sequence and the second will fail-fast if the first hasn't finished.
@@ -71,7 +71,7 @@ python 07_survival.py
 - `--partition=gpu` — Snellius A100 GPU partition. For H100 use `--partition=gpu_h100`. For MIG-sliced shares use `--partition=gpu_mig`.
 - `--gpus-per-node=1` — one GPU per job. The JAX code is single-GPU; more would sit idle.
 - `--cpus-per-task=16` — generous because we set `OMP_NUM_THREADS=1` to avoid oversubscription; spare cores help Python I/O and `numpy` accumulation during sampling.
-- `--time=18:00:00` (fit) / `12:00:00` (infer) — generous limits left over from the block-move sampler; the fit now takes well under an hour. Snellius `gpu` partition allows up to 5 days.
+- `--time=03:00:00` (fit) / `00:30:00` (infer) — the 14-chain fit should take 35–110 min (see above); raise the limit on the sbatch line if the first ETA printed in the log says otherwise. Snellius `gpu` partition allows up to 5 days.
 
 ## Verifying setup before the big run
 
@@ -80,7 +80,7 @@ Submit a tiny smoke-test with reduced sample counts to confirm the env loads and
 ```bash
 EA_RESULTS_DIR=$HOME/ea_smoke/results EA_FIGURES_DIR=$HOME/ea_smoke/figures \
 N_OUTER=20 BURN=5 THIN=1 N_CHAINS=2 \
-sbatch --time=00:30:00 slurm_sampler.sh
+sbatch --time=00:30:00 slurm_fit_hierarchical.sh
 ```
 
 Should complete in a few minutes and write `$HOME/ea_smoke/results/hierarchical_fit.pkl`. The wrapper only fills in `N_OUTER`, `BURN`, `THIN`, `N_CHAINS`, `N_FFBS`, `N_SWAP`, `CKPT_EVERY`, `RESUME` when they are not already set, so values given on the `sbatch` line win. Set `EA_RESULTS_DIR` as above so the smoke test does not overwrite the production `results/` pickles and checkpoints. Don't rely on the smoke-test fit for actual analysis.

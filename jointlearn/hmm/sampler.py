@@ -41,10 +41,12 @@ from jointlearn.hmm import config as CFG
 from jointlearn.hmm.config import (HYPER_INIT, TAU_INIT, PRIOR_MU0, PRIOR_SD0,
                     A0, B0, A_TAU, B_TAU, PROP_SD, SHIFT_SD, SHIFT_SD_POP)
 
-# -------- config (env vars override; defaults = local-run values) --------
-N_OUTER = int(os.environ.get('N_OUTER', 600))
-BURN = int(os.environ.get('BURN', 200))
-THIN = int(os.environ.get('THIN', 4))
+# -------- config (env vars override; defaults = the production / reported fit:
+# 4800 outer iterations, burn-in 1200, thin 12, 7 chains, ~55 min on a laptop
+# RTX 3050 Ti; for a quick look use e.g. N_OUTER=600 BURN=200 THIN=4) --------
+N_OUTER = int(os.environ.get('N_OUTER', 4800))
+BURN = int(os.environ.get('BURN', 1200))
+THIN = int(os.environ.get('THIN', 12))
 TRAJ_SUBSET = [42, 102, 247, 63, 213, 250, 114]      # ppts shown in the summary figure
 N_CHAINS = int(os.environ.get('N_CHAINS', 7))         # independent seeds
 N_FFBS = int(os.environ.get('N_FFBS', 1))           # per-word belief FFBS passes / sweep
