@@ -13,6 +13,10 @@
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate pymc523
 echo "python: $(which python)"
+# make the repository importable even if `pip install -e .` was not run in
+# this env (the wrappers are submitted from slurm/, the root is one level up)
+export PYTHONPATH="$(cd .. && pwd)${PYTHONPATH:+:$PYTHONPATH}"
+python -c "import jointlearn; print('jointlearn:', jointlearn.__file__)"
 python -c "import jax; print('jax:', jax.__version__, 'devices:', jax.devices())"
 
 export OMP_NUM_THREADS=1
