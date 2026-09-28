@@ -137,7 +137,7 @@ python 03_condition_effects.py    # main result
 python 04_convergence.py
 python 05_ppc.py
 python 06_per_participant.py
-python 07_survival.py             # secondary, ~5 min
+python 07_survival.py             # secondary, ~30 min (Weibull fits over all 4200 draws)
 ```
 
 Parameter recovery (needs the real fit for the ground truth; ~5 min per dataset on a laptop GPU at the recovery defaults):
