@@ -4,11 +4,11 @@ GPU-backed full-scale run of `01_fit.py` + `02_postprocess.py`. Conda env `pymc5
 
 ## Files
 
-- `slurm_fit_hierarchical.sh` — hierarchical fit on 1 GPU (gpu partition) at the production configuration (4800 outer iterations, burn-in 1200, thin 12, 14 chains). ~0.08 s per outer iteration on a laptop RTX 3050 Ti, i.e. ~110 min for 14 chains there (the reported 7-chain fit took 55 min); the A100 has not been timed, expect 1.5–3x faster. The 3 h time limit is a safety margin. Saves the full joint posterior including `(B, O)` for all 325 participants.
+- `slurm_fit_hierarchical.sh` — hierarchical fit on 1 GPU (gpu partition) at the production configuration (4800 outer iterations, burn-in 1200, thin 12, 14 chains). This is the reported fit (run 2026-09-25). ~0.08 s per outer iteration on a laptop RTX 3050 Ti, i.e. ~110 min for 14 chains there; the A100 is faster (fill in the per-iteration time from `hier_fit_<jobid>.out`). The 3 h time limit is a safety margin. Saves the full joint posterior including `(B, O)` for all 325 participants.
 - `slurm_infer_per_participant.sh` — post-process the hierarchical fit into per-participant marginals + PPC. **No MCMC**, just summarises what's in `hierarchical_fit.pkl`. Runs in seconds. (Kept on GPU partition only to share the JAX env; no GPU needed.)
 - `slurm_param_recovery.sh` — parameter recovery for the hierarchical fit as an array job: task `k` refits synthetic dataset `k` of `MODE` (`prior`, `null` or `posterior`; see `analyses/hmm/08_param_recovery.py`). Generate the datasets first with `python 08_param_recovery.py simulate --mode $MODE --n_rep 8` (needs `results/hierarchical_fit.pkl`), then `sbatch slurm_param_recovery.sh posterior` (the mode is a positional argument: Snellius does not export the caller's environment to the job, so an env var would be ignored and the default mode run instead), then `python 08_param_recovery.py analyze --mode $MODE`. Each task takes a few minutes at the recovery defaults (`N_OUTER=1200 BURN=400 THIN=8 N_CHAINS=3`); a re-submitted task resumes from its checkpoints.
 
-The hierarchical fit reads its config from env vars (`N_OUTER`, `N_CHAINS`, etc.); the defaults in `sampler.py` are the production configuration with 7 chains, the wrapper raises the chain count to 14. The post-process script has no config of its own.
+The hierarchical fit reads its config from env vars (`N_OUTER`, `N_CHAINS`, etc.); the defaults in `sampler.py` are the production configuration with 14 chains and the wrapper uses the same values. The post-process script has no config of its own.
 
 ## Config (env vars exported by the SLURM scripts)
 
@@ -18,7 +18,7 @@ The hierarchical fit reads its config from env vars (`N_OUTER`, `N_CHAINS`, etc.
 | `N_OUTER`               | 4800                | 4800            |
 | `BURN`                  | 1200                | 1200            |
 | `THIN`                  | 12                  | 12              |
-| `N_CHAINS`              | 7                   | 14              |
+| `N_CHAINS`              | 14                  | 14              |
 | `N_FFBS`                | 1                   | 1               |
 | `N_SWAP`                | 0                   | 0               |
 | **per-ppt post-process** | (no MCMC, just summarises) | (no MCMC, just summarises) |

@@ -27,9 +27,9 @@ export NUMEXPR_MAX_THREADS=1
 
 # ----- run config (scaled up vs local) -----
 # Production configuration = the reported fit: 4800 outer iterations, burn-in
-# 1200, thinning 12 (300 retained samples per chain). The reported fit used 7
-# chains (sampler.py default, ~55 min on a laptop RTX 3050 Ti); 14 chains here
-# double the pooled effective sample size. Chains differ only by PRNG seed
+# 1200, thinning 12 (300 retained samples per chain), 14 chains (also the
+# sampler.py default; the reported fit is the 2026-09-25 run of this script).
+# An earlier 7-chain laptop fit gave the same posteriors. Chains differ only by PRNG seed
 # (order inits are impossible: FFBS resamples O at the start of every sweep).
 # (N_OUTER - BURN) need not be a multiple of THIN, but keep it so for round
 # sample counts. Values already in the environment win (sbatch exports the
