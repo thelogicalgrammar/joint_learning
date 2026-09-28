@@ -14,15 +14,19 @@
 # 01_fit.py (see analyses/hmm/08_param_recovery.py).
 # Before submitting, generate the datasets once (needs results/hierarchical_fit.pkl):
 #   cd ../analyses/hmm && python 08_param_recovery.py simulate --mode $MODE --n_rep 8
-# then, from slurm/:
-#   MODE=prior sbatch slurm_param_recovery.sh          (array 0-7 = --n_rep 8)
-#   MODE=null sbatch slurm_param_recovery.sh
-#   MODE=posterior sbatch slurm_param_recovery.sh
+# then, from slurm/, with the mode as the script's argument:
+#   sbatch slurm_param_recovery.sh prior               (array 0-7 = --n_rep 8)
+#   sbatch slurm_param_recovery.sh null
+#   sbatch slurm_param_recovery.sh posterior
 # and afterwards:  python 08_param_recovery.py analyze --mode $MODE
-# The fit config comes from the usual env vars; the recovery defaults are
-# N_OUTER=1200 BURN=400 THIN=8 N_CHAINS=3 RESUME=1 (a re-submitted task
-# continues from its checkpoints). Override on the sbatch line, e.g.
-#   MODE=prior N_CHAINS=4 sbatch slurm_param_recovery.sh
+# The mode is a positional argument, NOT an env var: on Snellius the caller's
+# environment is not exported to the job, so `MODE=null sbatch ...` silently
+# ran the default (prior) mode three times over on 2026-09-28. Without an
+# argument the script refuses to run. The fit config still comes from the
+# usual env vars with the recovery defaults N_OUTER=1200 BURN=400 THIN=8
+# N_CHAINS=3 RESUME=1 (a re-submitted task continues from its checkpoints);
+# to override them pass them explicitly through sbatch, e.g.
+#   sbatch --export=ALL,N_CHAINS=4 slurm_param_recovery.sh prior
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate pymc523
@@ -40,7 +44,8 @@ export NUMEXPR_MAX_THREADS=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.85
 
-MODE=${MODE:-prior}
+MODE=${1:?usage: sbatch slurm_param_recovery.sh prior|null|posterior}
+case "$MODE" in prior|null|posterior) ;; *) echo "unknown mode: $MODE"; exit 1;; esac
 cd ../analyses/hmm
 echo "cwd: $(pwd); mode $MODE, replicate $SLURM_ARRAY_TASK_ID"
 python -u 08_param_recovery.py fit --mode "$MODE" --rep "$SLURM_ARRAY_TASK_ID"
