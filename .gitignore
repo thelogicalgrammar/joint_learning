@@ -164,6 +164,7 @@ cython_debug/
 
 # HMM pipeline outputs (large pickles, generated figures)
 analyses/hmm/results/
+analyses/hmm/results_local/
 analyses/hmm/figures/
 
 # editor / assistant settings
