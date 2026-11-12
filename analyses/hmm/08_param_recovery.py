@@ -309,11 +309,18 @@ def analyze(mode):
               f'median abs error {np.median(np.abs(e)):.0f} trials, bias {e.mean():+.1f}, '
               f'95% coverage {cov:.0%}, corr {np.corrcoef(c_true[ever], c_post[ever])[0, 1]:.2f}')
 
-    # ---- figure ----
-    plt.rcParams.update({'font.size': 9, 'axes.titlesize': 10, 'axes.labelsize': 9,
-                         'legend.fontsize': 7.5, 'xtick.labelsize': 8, 'ytick.labelsize': 8})
-    fig, axes = plt.subplots(2, K, figsize=(13, 6.8))
+    # ---- figure (paper size: 7 in wide) ----
+    plt.rcParams.update({'font.size': 7, 'axes.titlesize': 7.5, 'axes.labelsize': 7,
+                         'legend.fontsize': 6, 'xtick.labelsize': 6, 'ytick.labelsize': 6,
+                         'axes.linewidth': 0.6, 'xtick.major.width': 0.6, 'ytick.major.width': 0.6,
+                         'xtick.major.size': 2.5, 'ytick.major.size': 2.5,
+                         'xtick.minor.size': 1.5, 'ytick.minor.size': 1.5})
+    fig, axes = plt.subplots(2, K, figsize=(7.0, 3.7))
     log_k = [SYM[n][2] for n in names]
+
+    def note(ax, txt):
+        ax.text(0.04, 0.96, txt, transform=ax.transAxes, va='top', ha='left', fontsize=6)
+
     for k, n in enumerate(names):
         sym, desc, _ = SYM[n]
         link = 'log' if NB.TPAR_SPEC[k][1] == 'log' else 'logit'
@@ -327,30 +334,36 @@ def analyze(mode):
             off = (np.arange(R) - (R - 1) / 2) / max(R - 1, 1)
             span = np.ptp(NB.tpar_to_nat_np(mu_true[:, :, k], k)) or 0.05 * abs(x.mean())
             x = x * np.exp(0.12 * off) if log_k[k] else x + 0.04 * span * off
-            ax.errorbar(x, y, yerr=[y - lo, hi - y], fmt='o', ms=3.5, color=RP.order_colors[w],
-                        label=RP.order_labels[w], alpha=0.85, lw=0.8)
+            ax.errorbar(x, y, yerr=[y - lo, hi - y], fmt='o', ms=1.8, color=RP.order_colors[w],
+                        label=RP.order_labels[w], alpha=0.85, lw=0.5)
         allv = np.concatenate([NB.tpar_to_nat_np(a[:, :, k], k).ravel() for a in (mu_true, mu_lo, mu_hi)])
         lim = [allv.min(), allv.max()]
-        ax.plot(lim, lim, 'k--', lw=0.7, zorder=0)
+        ax.plot(lim, lim, 'k--', lw=0.5, zorder=0)
         if log_k[k]:
             ax.set_xscale('log'); ax.set_yscale('log')
-        ax.set_title(f'{desc} ${sym}$: condition means\n95% coverage {cover_mu[:, :, k].mean():.0%}')
-        ax.set_xlabel(f'true ${sym}$'); ax.set_ylabel(f'estimated ${sym}$ (median, 95% CI)')
+        ax.set_title(f'{desc} ${sym}$')
+        note(ax, f'coverage {cover_mu[:, :, k].mean():.0%}')
+        ax.set_xlabel(f'true ${sym}$', labelpad=1)
         if k == 0:
-            ax.legend(ncol=2, handletextpad=0.2, columnspacing=0.8)
+            ax.set_ylabel('condition means\nestimated (median, 95% CI)')
         # row 2: per-participant, link scale
         ax = axes[1, k]
-        ax.scatter(t_true[:, k], t_mean[:, k], s=3, alpha=0.25, c='#377eb8', lw=0)
+        ax.scatter(t_true[:, k], t_mean[:, k], s=1, alpha=0.2, c='#377eb8', lw=0, rasterized=True)
         lim = [min(t_true[:, k].min(), t_mean[:, k].min()), max(t_true[:, k].max(), t_mean[:, k].max())]
-        ax.plot(lim, lim, 'k--', lw=0.7)
-        ax.set_xlim(lim); ax.set_ylim(lim); ax.set_aspect('equal', adjustable='box')
-        ax.set_title(f'${sym}$: per participant\n95% coverage {cover_t[:, k].mean():.0%}, '
-                     f'$r$ = {np.corrcoef(t_true[:, k], t_mean[:, k])[0, 1]:.2f}')
-        ax.set_xlabel(f'true {link} ${sym}$'); ax.set_ylabel(f'posterior mean {link} ${sym}$')
-    fig.suptitle(f'Parameter recovery, {MODE_TITLE[mode]}: {R} simulated dataset{"s" if R > 1 else ""}', fontsize=12)
-    plt.tight_layout()
-    IO.savefig(fig, f'param_recovery_{mode}.png')
+        ax.plot(lim, lim, 'k--', lw=0.5)
+        ax.set_xlim(lim); ax.set_ylim(lim)
+        note(ax, f'coverage {cover_t[:, k].mean():.0%}\n$r$ = {np.corrcoef(t_true[:, k], t_mean[:, k])[0, 1]:.2f}')
+        ax.set_xlabel(f'true {link} ${sym}$', labelpad=1)
+        if k == 0:
+            ax.set_ylabel('participants\nestimated (posterior mean)')
+    h, l = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, ncol=W, loc='upper center', bbox_to_anchor=(0.5, 1.0), frameon=False,
+               handletextpad=0.1, columnspacing=1.2, markerscale=1.5)
+    fig.tight_layout(pad=0.3, h_pad=0.6, w_pad=0.6, rect=(0, 0, 1, 0.95))
+    IO.savefig(fig, f'param_recovery_{mode}.png', dpi=300)
     IO.savefig(fig, f'param_recovery_{mode}.pdf')
+    plt.rcdefaults()
+
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
