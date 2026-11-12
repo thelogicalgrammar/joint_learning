@@ -13,9 +13,9 @@ it appears in the paper:
   Text     typological-group ratios (S-, V-, O-initial) for gamma, kappa and
            lambda; ranking of the six orders by gamma
   Table    all pairwise comparisons between word orders
-  Tables   one per parameter: for every pair of orders, the share of
-           posterior draws in which the row order's value exceeds the
-           column order's
+  Table    for every pair of orders and each of gamma, kappa, lambda, the
+           share of posterior draws in which the row order's value exceeds
+           the column order's (upper triangle; credible differences shaded)
 
 Natural-scale values are those of the *typical participant* of a condition:
 the inverse link of the condition mean mu[j, k] (logit for gamma and lambda,
@@ -175,6 +175,12 @@ committed = np.stack([(O[:, cond == w] != NB.UNK_O).mean(axis=1)
                       for w in range(W)], axis=1)    # (S, W, T)
 true_ord = np.stack([(O[:, cond == w] == w).mean(axis=1)
                      for w in range(W)], axis=1)     # (S, W, T), committed to the true order
+# Per participant: posterior probability of being committed to a wrong
+# order at the last trial; 'probably wrong' = above WRONG_P.
+WRONG_P = 0.8
+p_wrong = ((O[:, :, -1] != NB.UNK_O) & (O[:, :, -1] != cond)).mean(axis=0)   # (P,)
+n_wrong = [int((p_wrong[cond == w] > WRONG_P).sum()) for w in range(W)]
+n_cond = [int((cond == w).sum()) for w in range(W)]
 del O
 
 trial = np.arange(1, RP.T + 1)
@@ -220,29 +226,32 @@ ct_rows = []
 for w in range(W):
     ht = half_time(true_ord[:, w])
     ct_rows.append([labels[w], summ(true_ord[:, w, 49], 'rate'), summ(true_ord[:, w, -1], 'rate'),
-                    summ(committed[:, w, -1], 'rate'), summ_time(ht), fmt_p(np.mean(np.isfinite(ht)))])
+                    summ(committed[:, w, -1], 'rate'), summ_time(ht), fmt_p(np.mean(np.isfinite(ht))),
+                    f'{n_wrong[w]} / {n_cond[w]}'])
 out('| order | correct order, trial 50 | correct order, trial 200 | any order, trial 200 | '
-    'half-time (trial) | P(half reached by 200) |')
-out('|---|---|---|---|---|---|')
+    f'half-time (trial) | P(half reached by 200) | wrong order at 200, P > {WRONG_P} |')
+out('|---|---|---|---|---|---|---|')
 for row in ct_rows:
     out('| ' + ' | '.join(row) + ' |')
 out()
 R.latex([r'\begin{table}[t]',
          r'  \centering\small',
-         r'  \begin{tabular}{llllll}',
+         r'  \begin{tabular}{lllllll}',
          r'    \toprule',
-         r'    & \multicolumn{2}{c}{Correct order} & Any order & & \\',
+         r'    & \multicolumn{2}{c}{Correct order} & Any order & & & Wrong order \\',
          r'    \cmidrule(lr){2-3}\cmidrule(lr){4-4}',
-         r'    Order & Trial 50 & Trial 200 & Trial 200 & Half-time & $P(\text{half by 200})$ \\',
+         r'    Order & Trial 50 & Trial 200 & Trial 200 & Half-time & $P(\text{half by 200})$ & Trial 200 \\',
          r'    \midrule']
-        + ['    ' + ' & '.join(r[:5] + [p_tex(r[5])]).replace('> 200', '$>$ 200') + r' \\'
+        + ['    ' + ' & '.join(r[:5] + [p_tex(r[5]), r[6]]).replace('> 200', '$>$ 200') + r' \\'
            for r in ct_rows]
         + [r'    \bottomrule',
            r'  \end{tabular}',
            r'  \caption{Share of participants committed to the correct word order (and to any '
            r'order) at trials 50 and 200, and the first trial by which half of a condition has '
            r'committed to the correct order; posterior median and 95\% interval over draws of '
-           r'the latent word-order trajectories.}',
+           r'the latent word-order trajectories. Wrong order: participants whose posterior '
+           rf'probability of being committed to a wrong order at trial 200 exceeds {WRONG_P}, '
+           r'out of the participants in the condition.}',
            r'  \label{tab:commitment}',
            r'\end{table}'])
 out('```latex')
@@ -372,35 +381,70 @@ out('```')
 # exceeds the column order's. The inverse link is monotone, so this equals the
 # same probability for the condition means mu on the transformed scale.
 
-SYMBOL = {'gamma': r'$\gamma$', 'kappa': r'$\kappa$', 'lambda': r'$\lambda$'}
-out('## Tables: P(row order > column order), per parameter')
+out('## Table: P(row order > column order)')
 out()
 out('Share of posterior draws in which the row order\'s value is higher than the '
-    'column order\'s; each cell equals 1 minus its mirror image.')
+    'column order\'s, for gamma, kappa and lambda. Only the upper triangle is shown '
+    '(the cell below the diagonal would be 1 minus its mirror image); the three parameters '
+    'side by side. Credible differences '
+    '(the 95% interval of the difference excludes 0, i.e. P > 0.975 or P < 0.025) are '
+    'in bold here and shaded in the LaTeX: blue = row higher, orange = row lower. '
+    'The LaTeX needs booktabs and colortbl (for \\cellcolor).')
 out()
-for name, x in PARAMS.items():
-    cells = [['—' if a == b else fmt_p(np.mean(x[:, a] > x[:, b])) for b in range(W)]
-             for a in range(W)]
-    out(f'### {name}')
-    out()
-    out('| row > column | ' + ' | '.join(labels) + ' |')
-    out('|---|' + '---|' * W)
-    for a in range(W):
-        out(f'| {labels[a]} | ' + ' | '.join(cells[a]) + ' |')
-    out()
-    R.latex([r'\begin{table}[t]',
-             r'  \centering\small',
-             r'  \begin{tabular}{l' + 'c' * W + '}',
-             r'    \toprule',
-             r'    Row $>$ column & ' + ' & '.join(labels) + r' \\',
-             r'    \midrule']
-            + [f'    {labels[a]} & ' + ' & '.join('---' if c == '—' else p_tex(c) for c in cells[a])
-               + r' \\' for a in range(W)]
-            + [r'    \bottomrule',
-               r'  \end{tabular}',
-               r'  \caption{Posterior probability that ' + SYMBOL[name] + r' of the typical '
-               r'participant is higher in the row word order than in the column word order.}',
-               r'  \label{tab:pgreater-' + name + '}',
-               r'\end{table}'])
+CRED = 0.025                      # two-sided 95%
+ROWS, COLS = range(W - 1), range(1, W)
+NAME_TEX = {'gamma': r'commitment rate $\gamma$', 'kappa': r'lexical change cost $\kappa$',
+            'lambda': r'lapse rate $\lambda$'}
+
+
+def p_short(p):
+    """Compact probability for the side-by-side table: '.321', '>.999', '<.001'."""
+    s = fmt_p(p).replace('0.', '.').replace(' ', '')
+    return f'${{{s[0]}}}${s[1:]}' if s[0] in '<>' else s
+
+
+NC = len(COLS)
+names = list(PARAMS)
+out('| row > column | ' + ' | '.join(f'{n}: {labels[b]}' for n in names for b in COLS) + ' |')
+out('|---|' + '---|' * (NC * len(names)))
+body = []
+for a in ROWS:
+    md, tx = [], []
+    for name in names:
+        x = PARAMS[name]
+        for b in COLS:
+            if b <= a:
+                md.append(''); tx.append('')
+                continue
+            p = np.mean(x[:, a] > x[:, b]); c = fmt_p(p)
+            md.append(c if CRED <= p <= 1 - CRED else f'**{c}**')
+            cell = p_short(p)
+            tx.append(r'\cellcolor{blue!18}' + cell if p > 1 - CRED else
+                      r'\cellcolor{orange!22}' + cell if p < CRED else cell)
+    out(f'| {labels[a]} | ' + ' | '.join(md) + ' |')
+    body.append(f'    {labels[a]} & ' + ' & '.join(tx) + r' \\')
+out()
+spec = 'l' + ('@{\\hspace{12pt}}' + 'c' * NC) * len(names)
+R.latex([r'\begin{table}[t]',
+         r'  \centering\footnotesize',
+         r'  \setlength{\tabcolsep}{2.5pt}',
+         r'  \begin{tabular}{' + spec + '}',
+         r'    \toprule',
+         r'    & ' + ' & '.join(r'\multicolumn{' + str(NC) + r'}{c}{' + NAME_TEX[n] + '}'
+                               for n in names) + r' \\',
+         r'    ' + ''.join(r'\cmidrule(lr){' + f'{2 + k * NC}-{1 + (k + 1) * NC}' + '}'
+                           for k in range(len(names))),
+         r'    Row $>$ column & ' + ' & '.join(labels[b] for _ in names for b in COLS) + r' \\',
+         r'    \midrule']
+        + body
+        + [r'    \bottomrule',
+           r'  \end{tabular}',
+           r'  \caption{Posterior probability that the parameter of the typical participant '
+           r'is higher in the row word order than in the column word order (upper triangle; '
+           r'the lower triangle is its complement). Shaded: credible differences (probability '
+           r'above .975, blue, or below .025, orange). Higher $\gamma$ means faster commitment; '
+           r'higher $\kappa$ and $\lambda$ mean costlier lexical changes and more lapses.}',
+           r'  \label{tab:pgreater}',
+           r'\end{table}'])
 
 R.save(IO.RESULTS_DIR / '03_condition_effects.md')
