@@ -51,7 +51,8 @@ means and of the per-participant tpar with the truth (coverage of the 95%
 interval, bias, correlation), the typological p_commit contrasts of
 03_condition_effects.py, the hyper sds, and the latent trajectories
 (posterior probability of the true order / belief per trial, commit-time
-recovery). Writes figures/param_recovery_<mode>.png.
+recovery), printed. Writes figures/param_recovery_<mode>.{png,pdf}: condition
+means (top row) and per-participant parameters (bottom row), true vs estimated.
 """
 import os
 import sys
@@ -311,7 +312,7 @@ def analyze(mode):
     # ---- figure ----
     plt.rcParams.update({'font.size': 9, 'axes.titlesize': 10, 'axes.labelsize': 9,
                          'legend.fontsize': 7.5, 'xtick.labelsize': 8, 'ytick.labelsize': 8})
-    fig, axes = plt.subplots(3, K, figsize=(13, 10))
+    fig, axes = plt.subplots(2, K, figsize=(13, 6.8))
     log_k = [SYM[n][2] for n in names]
     for k, n in enumerate(names):
         sym, desc, _ = SYM[n]
@@ -346,44 +347,7 @@ def analyze(mode):
         ax.set_title(f'${sym}$: per participant\n95% coverage {cover_t[:, k].mean():.0%}, '
                      f'$r$ = {np.corrcoef(t_true[:, k], t_mean[:, k])[0, 1]:.2f}')
         ax.set_xlabel(f'true {link} ${sym}$'); ax.set_ylabel(f'posterior mean {link} ${sym}$')
-    ax = axes[2, 0]
-    for i, (name, _) in enumerate(res[0]['contrast'].items()):
-        tr = np.array([r['contrast'][name][0] for r in res])
-        med = np.array([np.median(r['contrast'][name][1]) for r in res])
-        lo = np.array([_ci(r['contrast'][name][1])[0] for r in res])
-        hi = np.array([_ci(r['contrast'][name][1])[1] for r in res])
-        off = (np.arange(R) - (R - 1) / 2) / max(R - 1, 1)
-        ax.errorbar(tr * np.exp(0.1 * off), med, yerr=[med - lo, hi - med], fmt='o', ms=3.5,
-                    lw=0.8, alpha=0.85, label=name.replace('/', ' / '),
-                    color=['#1b9e77', '#d95f02', '#7570b3'][i])
-    ax.set_xscale('log'); ax.set_yscale('log')
-    lo_, hi_ = ax.get_ylim()
-    ax.plot([lo_, hi_], [lo_, hi_], 'k--', lw=0.7, zorder=0)
-    ax.axhline(1, color='#888', lw=0.5)
-    ax.set_xlabel(r'true ratio of $\gamma$'); ax.set_ylabel(r'estimated ratio (median, 95% CI)')
-    ax.set_title(r'typological contrasts in $\gamma$')
-    ax.legend()
-    ax = axes[2, 1]
-    ax.scatter(c_true[ever], c_post[ever], s=4, alpha=0.35, c='#e6550d', lw=0)
-    ax.plot([0, T], [0, T], 'k--', lw=0.7)
-    ax.set_xlim(0, T); ax.set_ylim(0, T); ax.set_aspect('equal', adjustable='box')
-    ax.set_xlabel('true trial of first commitment'); ax.set_ylabel('estimated trial (posterior median)')
-    ax.set_title(f'order commitment time\n({ever.sum()} participants who commit)')
-    ax = axes[2, 2]
-    ax.plot(np.arange(1, T + 1), p_o.mean(0), color='#377eb8', label='word order')
-    ax.plot(np.arange(1, T + 1), p_b.mean((0, 2)), color='#4daf4a', label='lexicon (per word)')
-    ax.set_ylim(0, 1.02); ax.set_xlim(1, T); ax.set_xlabel('trial')
-    ax.set_ylabel('posterior P(true state)')
-    ax.set_title('latent state recovery by trial'); ax.legend()
-    ax = axes[2, 3]
-    acc = np.concatenate([r['acc'] for r in res])
-    ax.scatter(acc, p_o.mean(1), s=4, alpha=0.35, c='#377eb8', label='word order', lw=0)
-    ax.scatter(acc, p_b.mean((1, 2)), s=4, alpha=0.35, c='#4daf4a', label='lexicon', lw=0)
-    ax.axvline(0.25, color='#888', lw=0.5, ls=':')
-    ax.set_xlabel('simulated accuracy'); ax.set_ylabel('mean posterior P(true state)')
-    ax.set_ylim(0, 1.02)
-    ax.set_title('latent state recovery vs accuracy'); ax.legend(markerscale=2)
-    fig.suptitle(f'Parameter recovery, {MODE_TITLE[mode]}: {R} simulated datasets', fontsize=12)
+    fig.suptitle(f'Parameter recovery, {MODE_TITLE[mode]}: {R} simulated dataset{"s" if R > 1 else ""}', fontsize=12)
     plt.tight_layout()
     IO.savefig(fig, f'param_recovery_{mode}.png')
     IO.savefig(fig, f'param_recovery_{mode}.pdf')
