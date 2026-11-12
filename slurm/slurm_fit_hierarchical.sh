@@ -25,23 +25,20 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_MAX_THREADS=1
 
-# ----- run config (scaled up vs local) -----
-# Production configuration = the reported fit: 4800 outer iterations, burn-in
-# 1200, thinning 12 (300 retained samples per chain), 14 chains (also the
-# sampler.py default; the reported fit is the 2026-09-25 run of this script).
-# An earlier 7-chain laptop fit gave the same posteriors. Chains differ only by PRNG seed
-# (order inits are impossible: FFBS resamples O at the start of every sweep).
-# (N_OUTER - BURN) need not be a multiple of THIN, but keep it so for round
-# sample counts. Values already in the environment win (sbatch exports the
-# caller's env by default), so `N_OUTER=20 BURN=5 THIN=1 N_CHAINS=2 sbatch ...`
-# runs a smoke test instead of the full config; the defaults below apply
-# otherwise.
-export N_OUTER=${N_OUTER:-4800}
-export BURN=${BURN:-1200}
-export THIN=${THIN:-12}
-export N_CHAINS=${N_CHAINS:-14}
-export N_FFBS=${N_FFBS:-1}
-export CKPT_EVERY=${CKPT_EVERY:-100}
+# ----- run config -----
+# Defaults = the reported fit (also the sampler.py defaults): HMC-within-Gibbs,
+# 8 chains x (1000 warm-up + 6000 iterations, thin 20) = 2400 pooled draws,
+# trajectory length 3.3 x U[0.5, 1.5], chain k seeded SEED0 + k. The reported
+# fit was run on a laptop RTX 3050 Ti (~15 min per chain), 2026-11-10.
+# 01_fit.py runs each chain in its own process, one after the other. Values
+# already in the environment win, so
+# `N_WARMUP=30 N_SAMPLES=40 THIN=4 N_CHAINS=2 sbatch ...` runs a smoke test.
+export N_WARMUP=${N_WARMUP:-1000}
+export N_SAMPLES=${N_SAMPLES:-6000}
+export THIN=${THIN:-20}
+export N_CHAINS=${N_CHAINS:-8}
+export TRAJ=${TRAJ:-3.3}
+export SEED0=${SEED0:-20000}
 export RESUME=${RESUME:-0}
 
 # JAX/CUDA performance knobs
@@ -50,7 +47,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.85
 
 cd ../analyses/hmm
 echo "cwd: $(pwd)"
-echo "starting 01_fit.py with N_OUTER=$N_OUTER BURN=$BURN THIN=$THIN N_CHAINS=$N_CHAINS RESUME=$RESUME"
+echo "starting 01_fit.py with N_WARMUP=$N_WARMUP N_SAMPLES=$N_SAMPLES THIN=$THIN N_CHAINS=$N_CHAINS TRAJ=$TRAJ SEED0=$SEED0 RESUME=$RESUME"
 
 python -u 01_fit.py
 echo "01_fit.py done"

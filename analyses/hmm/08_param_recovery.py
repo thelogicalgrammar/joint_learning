@@ -40,9 +40,9 @@ by every mode for the ground truth):
 
 `fit` runs 01_fit.py in a subprocess with EA_SIM_DATA and
 EA_RESULTS_DIR pointing at results/param_recovery/<mode>/rep<k>/ (fit
-pickle, checkpoints, fit.log). Its MCMC config comes from the usual env vars
-with recovery defaults N_OUTER=1200 BURN=400 THIN=8 N_CHAINS=3 RESUME=1, so
-an interrupted or re-submitted job continues from its checkpoints. On
+pickle, per-chain files, fit.log). Its MCMC config comes from the usual env
+vars with recovery defaults N_WARMUP=500 N_SAMPLES=2000 THIN=20 N_CHAINS=3
+RESUME=1 (100 draws per chain), so a re-submitted job reuses finished chains. On
 Snellius, ../../slurm/slurm_param_recovery.sh fans `fit --rep k` out
 as an array job.
 
@@ -73,10 +73,17 @@ from jointlearn.hmm import simulate as SIM
 MODES = ('prior', 'null', 'posterior')
 PR_DIR = IO.RESULTS_DIR / 'param_recovery'
 HERE = Path(__file__).resolve().parent
-FIT_DEFAULTS = dict(N_OUTER='1200', BURN='400', THIN='8', N_CHAINS='3',
-                    CKPT_EVERY='200', RESUME='1')
+FIT_DEFAULTS = dict(N_WARMUP='500', N_SAMPLES='2000', THIN='20', N_CHAINS='3', RESUME='1')
 W, K, T, P = len(RP.order_labels), CFG.N_TPAR, RP.T, RP.P
 I_COMMIT = CFG.PARAM_NAMES.index('logit_p_commit_o')
+# display symbol, description, log axes on the natural scale (row 1 of the figure)
+SYM = {'logit_lam': (r'\lambda', 'lapse rate', False),
+       'log_kappa': (r'\kappa', 'lexical change cost', False),
+       'logit_eps_o': (r'\epsilon', 'order switch rate', True),
+       'logit_p_commit_o': (r'\gamma', 'commitment rate', True)}
+MODE_TITLE = {'prior': 'truth drawn from the model (prior mode)',
+              'null': 'no condition differences (null mode)',
+              'posterior': 'truth = a posterior draw of the real fit (posterior mode)'}
 CONTRASTS = [('S-initial', 'V-initial'), ('V-initial', 'O-initial'),
              ('S-initial', 'O-initial')]
 
@@ -302,68 +309,84 @@ def analyze(mode):
               f'95% coverage {cov:.0%}, corr {np.corrcoef(c_true[ever], c_post[ever])[0, 1]:.2f}')
 
     # ---- figure ----
-    fig, axes = plt.subplots(3, K, figsize=(4.2 * K, 12))
-    log_k = [n in ('logit_eps_o', 'logit_p_commit_o') for n in names]
+    plt.rcParams.update({'font.size': 9, 'axes.titlesize': 10, 'axes.labelsize': 9,
+                         'legend.fontsize': 7.5, 'xtick.labelsize': 8, 'ytick.labelsize': 8})
+    fig, axes = plt.subplots(3, K, figsize=(13, 10))
+    log_k = [SYM[n][2] for n in names]
     for k, n in enumerate(names):
+        sym, desc, _ = SYM[n]
+        link = 'log' if NB.TPAR_SPEC[k][1] == 'log' else 'logit'
+        # row 1: condition means, natural scale, one point per replicate (jittered)
         ax = axes[0, k]
         for w in range(W):
             x = NB.tpar_to_nat_np(mu_true[:, w, k], k)
             y = NB.tpar_to_nat_np(mu_med[:, w, k], k)
             lo = NB.tpar_to_nat_np(mu_lo[:, w, k], k)
             hi = NB.tpar_to_nat_np(mu_hi[:, w, k], k)
-            ax.errorbar(x, y, yerr=[y - lo, hi - y], fmt='o', ms=4, color=RP.order_colors[w],
-                        label=RP.order_labels[w], alpha=0.8, lw=0.8)
-        allv = np.concatenate([NB.tpar_to_nat_np(mu_true[:, :, k], k).ravel(),
-                               NB.tpar_to_nat_np(mu_hi[:, :, k], k).ravel(),
-                               NB.tpar_to_nat_np(mu_lo[:, :, k], k).ravel()])
-        ax.plot([allv.min(), allv.max()], [allv.min(), allv.max()], 'k--', lw=0.7)
+            off = (np.arange(R) - (R - 1) / 2) / max(R - 1, 1)
+            span = np.ptp(NB.tpar_to_nat_np(mu_true[:, :, k], k)) or 0.05 * abs(x.mean())
+            x = x * np.exp(0.12 * off) if log_k[k] else x + 0.04 * span * off
+            ax.errorbar(x, y, yerr=[y - lo, hi - y], fmt='o', ms=3.5, color=RP.order_colors[w],
+                        label=RP.order_labels[w], alpha=0.85, lw=0.8)
+        allv = np.concatenate([NB.tpar_to_nat_np(a[:, :, k], k).ravel() for a in (mu_true, mu_lo, mu_hi)])
+        lim = [allv.min(), allv.max()]
+        ax.plot(lim, lim, 'k--', lw=0.7, zorder=0)
         if log_k[k]:
             ax.set_xscale('log'); ax.set_yscale('log')
-        ax.set_title(f'{n}: condition means\n95% coverage {cover_mu[:, :, k].mean():.0%}',
-                     fontsize=9)
-        ax.set_xlabel('true (natural scale)'); ax.set_ylabel('posterior median [95% CI]')
+        ax.set_title(f'{desc} ${sym}$: condition means\n95% coverage {cover_mu[:, :, k].mean():.0%}')
+        ax.set_xlabel(f'true ${sym}$'); ax.set_ylabel(f'estimated ${sym}$ (median, 95% CI)')
         if k == 0:
-            ax.legend(fontsize=7)
+            ax.legend(ncol=2, handletextpad=0.2, columnspacing=0.8)
+        # row 2: per-participant, link scale
         ax = axes[1, k]
-        ax.scatter(t_true[:, k], t_mean[:, k], s=4, alpha=0.3, c='#377eb8')
+        ax.scatter(t_true[:, k], t_mean[:, k], s=3, alpha=0.25, c='#377eb8', lw=0)
         lim = [min(t_true[:, k].min(), t_mean[:, k].min()), max(t_true[:, k].max(), t_mean[:, k].max())]
         ax.plot(lim, lim, 'k--', lw=0.7)
-        ax.set_title(f'{n}: per-participant\ncover {cover_t[:, k].mean():.0%}, '
-                     f'r = {np.corrcoef(t_true[:, k], t_mean[:, k])[0, 1]:.2f}', fontsize=9)
-        ax.set_xlabel('true (transformed)'); ax.set_ylabel('posterior mean')
+        ax.set_xlim(lim); ax.set_ylim(lim); ax.set_aspect('equal', adjustable='box')
+        ax.set_title(f'${sym}$: per participant\n95% coverage {cover_t[:, k].mean():.0%}, '
+                     f'$r$ = {np.corrcoef(t_true[:, k], t_mean[:, k])[0, 1]:.2f}')
+        ax.set_xlabel(f'true {link} ${sym}$'); ax.set_ylabel(f'posterior mean {link} ${sym}$')
     ax = axes[2, 0]
     for i, (name, _) in enumerate(res[0]['contrast'].items()):
-        tr = [r['contrast'][name][0] for r in res]
-        med = [np.median(r['contrast'][name][1]) for r in res]
-        lo = [_ci(r['contrast'][name][1])[0] for r in res]
-        hi = [_ci(r['contrast'][name][1])[1] for r in res]
-        ax.errorbar(tr, med, yerr=[np.subtract(med, lo), np.subtract(hi, med)], fmt='o', ms=4,
-                    lw=0.8, alpha=0.8, label=name, color=['#1b9e77', '#d95f02', '#7570b3'][i])
+        tr = np.array([r['contrast'][name][0] for r in res])
+        med = np.array([np.median(r['contrast'][name][1]) for r in res])
+        lo = np.array([_ci(r['contrast'][name][1])[0] for r in res])
+        hi = np.array([_ci(r['contrast'][name][1])[1] for r in res])
+        off = (np.arange(R) - (R - 1) / 2) / max(R - 1, 1)
+        ax.errorbar(tr * np.exp(0.1 * off), med, yerr=[med - lo, hi - med], fmt='o', ms=3.5,
+                    lw=0.8, alpha=0.85, label=name.replace('/', ' / '),
+                    color=['#1b9e77', '#d95f02', '#7570b3'][i])
     ax.set_xscale('log'); ax.set_yscale('log')
-    lim = ax.get_xlim(); ax.plot(lim, lim, 'k--', lw=0.7)
-    ax.axhline(1, color='#888', lw=0.5); ax.axvline(1, color='#888', lw=0.5)
-    ax.set_xlabel('true ratio'); ax.set_ylabel('posterior median [95% CI]')
-    ax.set_title('p_commit typological contrasts', fontsize=9); ax.legend(fontsize=7)
+    lo_, hi_ = ax.get_ylim()
+    ax.plot([lo_, hi_], [lo_, hi_], 'k--', lw=0.7, zorder=0)
+    ax.axhline(1, color='#888', lw=0.5)
+    ax.set_xlabel(r'true ratio of $\gamma$'); ax.set_ylabel(r'estimated ratio (median, 95% CI)')
+    ax.set_title(r'typological contrasts in $\gamma$')
+    ax.legend()
     ax = axes[2, 1]
-    ax.scatter(c_true[ever], c_post[ever], s=5, alpha=0.4, c='#e6550d')
+    ax.scatter(c_true[ever], c_post[ever], s=4, alpha=0.35, c='#e6550d', lw=0)
     ax.plot([0, T], [0, T], 'k--', lw=0.7)
-    ax.set_xlabel('true commit trial'); ax.set_ylabel('posterior median commit trial')
-    ax.set_title(f'order commit time ({ever.sum()} committing ppts)', fontsize=9)
+    ax.set_xlim(0, T); ax.set_ylim(0, T); ax.set_aspect('equal', adjustable='box')
+    ax.set_xlabel('true trial of first commitment'); ax.set_ylabel('estimated trial (posterior median)')
+    ax.set_title(f'order commitment time\n({ever.sum()} participants who commit)')
     ax = axes[2, 2]
-    ax.plot(p_o.mean(0), color='#377eb8', label='order')
-    ax.plot(p_b.mean((0, 2)), color='#4daf4a', label='belief (per word)')
-    ax.set_ylim(0, 1.02); ax.set_xlabel('trial'); ax.set_ylabel('posterior P(true latent)')
-    ax.set_title('latent recovery by trial', fontsize=9); ax.legend(fontsize=8)
+    ax.plot(np.arange(1, T + 1), p_o.mean(0), color='#377eb8', label='word order')
+    ax.plot(np.arange(1, T + 1), p_b.mean((0, 2)), color='#4daf4a', label='lexicon (per word)')
+    ax.set_ylim(0, 1.02); ax.set_xlim(1, T); ax.set_xlabel('trial')
+    ax.set_ylabel('posterior P(true state)')
+    ax.set_title('latent state recovery by trial'); ax.legend()
     ax = axes[2, 3]
     acc = np.concatenate([r['acc'] for r in res])
-    ax.scatter(acc, p_o.mean(1), s=5, alpha=0.4, c='#377eb8', label='order')
-    ax.scatter(acc, p_b.mean((1, 2)), s=5, alpha=0.4, c='#4daf4a', label='belief')
-    ax.set_xlabel('simulated accuracy (vs true scene)'); ax.set_ylabel('mean posterior P(true latent)')
-    ax.set_title('latent recovery vs accuracy', fontsize=9); ax.legend(fontsize=8)
-    fig.suptitle(f'Parameter recovery, mode "{mode}" ({R} replicates)', fontsize=11)
+    ax.scatter(acc, p_o.mean(1), s=4, alpha=0.35, c='#377eb8', label='word order', lw=0)
+    ax.scatter(acc, p_b.mean((1, 2)), s=4, alpha=0.35, c='#4daf4a', label='lexicon', lw=0)
+    ax.axvline(0.25, color='#888', lw=0.5, ls=':')
+    ax.set_xlabel('simulated accuracy'); ax.set_ylabel('mean posterior P(true state)')
+    ax.set_ylim(0, 1.02)
+    ax.set_title('latent state recovery vs accuracy'); ax.legend(markerscale=2)
+    fig.suptitle(f'Parameter recovery, {MODE_TITLE[mode]}: {R} simulated datasets', fontsize=12)
     plt.tight_layout()
     IO.savefig(fig, f'param_recovery_{mode}.png')
-
+    IO.savefig(fig, f'param_recovery_{mode}.pdf')
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

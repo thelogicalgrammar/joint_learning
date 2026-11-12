@@ -1,10 +1,11 @@
 # Shared loaders + HMM pipeline (jointlearn, analyses/hmm). Tested with
-# Python 3.13, jax 0.6.0 (CUDA 12). For a GPU install use `pip install "jax[cuda12]"`.
+# Python 3.13, jax 0.6.0 (CUDA 12), numpyro 0.18. For a GPU install use `pip install "jax[cuda12]"`.
 numpy
 pandas
 scipy
 matplotlib
 jax
+numpyro
 arviz
 xarray
 # analyses/model_free/model_free_analysis.py (logistic regression in Python)

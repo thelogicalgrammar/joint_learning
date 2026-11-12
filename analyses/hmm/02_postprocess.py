@@ -70,7 +70,7 @@ ERR_OBS_SWAP = ((CH != 0) & SWAP_MASK_PT).sum(axis=1)                  # (P,)
 def choice_probs_all(B, O, params):
     """Per (ppt, trial) probability of each of the 4 candidates under the
     emission model (simulate.choice_probs; column 0 = Pr(correct), identical
-    to model.emit_p_correct). B (P, T, 7), O (P, T), params (P, 5) natural.
+    to exp(model.emission_lp) at choice 0). B (P, T, 7), O (P, T), params (P, 5) natural.
     Returns (P, T, 4)."""
     return SIM.choice_probs(B, O, params[:, 0], U, C, WO)
 

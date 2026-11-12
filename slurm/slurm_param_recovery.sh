@@ -23,8 +23,8 @@
 # environment is not exported to the job, so `MODE=null sbatch ...` silently
 # ran the default (prior) mode three times over on 2026-09-28. Without an
 # argument the script refuses to run. The fit config still comes from the
-# usual env vars with the recovery defaults N_OUTER=1200 BURN=400 THIN=8
-# N_CHAINS=3 RESUME=1 (a re-submitted task continues from its checkpoints);
+# usual env vars with the recovery defaults N_WARMUP=500 N_SAMPLES=2000 THIN=20
+# N_CHAINS=3 RESUME=1 (a re-submitted task reuses its finished chains);
 # to override them pass them explicitly through sbatch, e.g.
 #   sbatch --export=ALL,N_CHAINS=4 slurm_param_recovery.sh prior
 

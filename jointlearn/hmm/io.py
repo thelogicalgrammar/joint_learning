@@ -53,19 +53,11 @@ def save_pickle(obj, name, directory=RESULTS_DIR):
 
 def load_fit(name=FIT_NAME):
     """Load the hierarchical fit and refuse pickles that do not match the
-    current code or data: older model versions (pooled hyperprior with
-    array-valued `hyper`, or the `traj_store` format), a different number of
-    fitted parameters, a different fixed kappa_s, or a different participant
+    current code or data: a different number of fitted parameters, a different fixed kappa_s, or a different participant
     set / condition vector than `data` currently loads (every downstream
     script indexes the fit's samples by the current data)."""
     from jointlearn.hmm import config as CFG, model as NB
     fit = load_pickle(name)
-    ch = fit['chains'][0]
-    if 'B' not in ch or not isinstance(ch.get('hyper'), dict):
-        raise SystemExit(
-            f'{name} was produced by an older 01_fit.py (no full '
-            f'B/O samples and/or no condition-level hyper dict). Re-run '
-            f'01_fit.py; old pickles are not compatible.')
     if fit.get('n_tpar') != CFG.N_TPAR:
         raise SystemExit(
             f'{name} has n_tpar={fit.get("n_tpar")} but config.N_TPAR='

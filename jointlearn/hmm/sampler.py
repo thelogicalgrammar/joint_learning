@@ -1,28 +1,40 @@
 """
-Hierarchical Gibbs sampler (library part of the fit; the entry point is
-analyses/hmm/01_fit.py). Hierarchical fit using the partial-lexicon HMM with UNK-order extension,
-with a CONDITION-LEVEL hyperprior (condition = the participant's word
-order, 6 levels). JAX vmap over all participants on GPU; Python loop over
-N_CHAINS independent chains that differ only by PRNG seed. Note: chains
-CANNOT be initialised at specific orders — traj_sweep resamples O exactly
-(FFBS given B) at the start of every sweep, so any O init is immediately
-overwritten. Convergence diagnostics therefore rest on multi-seed
-agreement.
+HMC-within-Gibbs sampler for the hierarchical partial-lexicon HMM (library
+part of the fit; the entry point is analyses/hmm/01_fit.py).
 
-Per-participant model: 4 fitted transformed parameters
-  t[0] = logit(lam), t[1] = log(kappa), t[2] = logit(eps_o),
-  t[3] = logit(p_commit_o)
-(kappa_s is fixed at model.KAPPA_S_FIXED; it is unidentified — see README).
+Target: all participants jointly, with a CONDITION-LEVEL hyperprior
+(condition = the participant's word order, 6 levels; see config.py):
 
-Hierarchy (see config.py):
   tpar[p, k] ~ N(mu[w(p), k], sigma_k^2),  mu[w, k] ~ N(m_k, tau_k^2),
   m_k ~ N(mu0_k, sd0_k^2),  sigma_k^2 ~ IG(A0, B0),  tau_k^2 ~ IG(A_TAU, B_TAU)
 
-Condition effects on learnability are read from the posterior of mu[:, k]
-(03_condition_effects.py).
+with 4 fitted transformed parameters per participant
+  t[0] = logit(lam), t[1] = log(kappa), t[2] = logit(eps_o), t[3] = logit(p_commit_o)
+(kappa_s is fixed at model.KAPPA_S_FIXED; it is unidentified, see README).
 
-Writes a per-chain checkpoint every CKPT_EVERY iters so partial results can
-be analysed without waiting for the full run.
+One iteration (NumPyro HMCGibbs):
+  1. Gibbs: every participant's latent belief and order trajectories (B, O)
+     are redrawn given its parameters by model.traj_sweep (exact FFBS),
+     vmapped over participants, and summarised into sufficient statistics.
+  2. HMC: all continuous parameters (m, tau^2, sigma^2, condition means and
+     participant parameters, non-centred: mu = m + tau * mu_raw,
+     tpar = mu[w] + sigma * z) jointly, given those statistics. Fixed-length
+     HMC with the trajectory length redrawn every iteration uniformly in
+     [0.5, 1.5] x TRAJ (JitterHMC); step size and diagonal mass matrix are
+     adapted during warm-up. NUTS gives the same posterior but its tree
+     building costs ~0.4 ms per leapfrog step here, ~8x the gradient.
+
+Sufficient statistics: the likelihood (model.loglik) depends on the per-trial
+statistics of model.stats_arrays only through how often each value occurs,
+so they are collapsed into 40 counts per participant (hist_stats) and the
+HMC target uses loglik_hist. The swap term n2 exp(-kappa_s) (kappa_s = 20)
+is below float32 resolution next to 1 + n1 exp(-kappa) and is dropped.
+
+Chains differ by seed and by a dispersed start (start_values); the latent
+trajectories always start all-UNK. Note: chains cannot be initialised at
+specific orders, since traj_sweep resamples O exactly at every sweep.
+Several chains in one process exhaust a 4 GB GPU, so 01_fit.py runs each
+chain in its own process (run_chain) and assembles them (save_fit).
 """
 import os
 import time
@@ -31,446 +43,269 @@ from pathlib import Path
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import lax, random, vmap
+from jax import random, vmap
+from jax.scipy.special import xlogy
+import numpyro
+import numpyro.distributions as dist
+from numpyro.distributions import constraints
+from numpyro.infer import MCMC, HMC, HMCGibbs
 
 from jointlearn.hmm import model as NB
 from jointlearn.hmm import dataset as RP
-from jointlearn.hmm import io as IO, analysis as AN
+from jointlearn.hmm import io as IO
 from jointlearn.hmm import config as CFG
 from jointlearn.hmm.config import (HYPER_INIT, TAU_INIT, PRIOR_MU0, PRIOR_SD0,
-                    A0, B0, A_TAU, B_TAU, PROP_SD, SHIFT_SD, SHIFT_SD_POP)
+                                   A0, B0, A_TAU, B_TAU)
 
-# -------- config (env vars override; defaults = the production / reported fit:
-# 4800 outer iterations, burn-in 1200, thin 12, 14 chains (run on a Snellius
-# A100, 2026-09-25); ~0.08 s per outer iteration on a laptop RTX 3050 Ti, i.e.
-# ~110 min there; for a quick look use e.g. N_OUTER=600 BURN=200 THIN=4) --------
-N_OUTER = int(os.environ.get('N_OUTER', 4800))
-BURN = int(os.environ.get('BURN', 1200))
-THIN = int(os.environ.get('THIN', 12))
-TRAJ_SUBSET = [42, 102, 247, 63, 213, 250, 114]      # ppts shown in the summary figure
-N_CHAINS = int(os.environ.get('N_CHAINS', 14))        # independent seeds
-N_FFBS = int(os.environ.get('N_FFBS', 1))           # per-word belief FFBS passes / sweep
-CKPT_EVERY = int(os.environ.get('CKPT_EVERY', 100))
-# RESUME=1: reuse finished chains and continue interrupted ones from their
-# last checkpoint (results/hier_chain{k}_ckpt.pkl). Checkpoints carry the
-# full sampler state, so a resumed chain is identical to an uninterrupted one.
+# -------- run config (env vars override; defaults = the reported fit of
+# 2026-11-10: 8 chains x (1000 warm-up + 6000 iterations, thin 20) = 300
+# retained draws per chain, 2400 pooled; ~15 min per chain on a laptop
+# RTX 3050 Ti) --------
+N_WARMUP = int(os.environ.get('N_WARMUP', 1000))
+N_SAMPLES = int(os.environ.get('N_SAMPLES', 6000))    # post-warm-up iterations
+THIN = int(os.environ.get('THIN', 20))
+N_CHAINS = int(os.environ.get('N_CHAINS', 8))
+TRAJ = float(os.environ.get('TRAJ', 3.3))             # base HMC trajectory length
+SEED0 = int(os.environ.get('SEED0', 20000))           # chain k has seed SEED0 + k
+# RESUME=1: 01_fit.py reuses finished chain files (results/hier_chain{k}.pkl)
+# whose config matches; unfinished chains are rerun from the start.
 RESUME = os.environ.get('RESUME', '0') == '1'
-assert 0 <= BURN < N_OUTER and THIN >= 1, \
-    f'need 0 <= BURN < N_OUTER and THIN >= 1 (got N_OUTER={N_OUTER}, BURN={BURN}, THIN={THIN})'
+assert N_WARMUP >= 0 and N_SAMPLES >= 1 and THIN >= 1, \
+    f'need N_WARMUP >= 0, N_SAMPLES >= 1, THIN >= 1 (got {N_WARMUP}, {N_SAMPLES}, {THIN})'
 
-N_TPAR = CFG.N_TPAR                              # = 4 fitted params
+N_TPAR = K = CFG.N_TPAR                          # = 4 fitted params
 assert N_TPAR == NB.N_TPAR == HYPER_INIT.shape[0]
 UNK_O = NB.UNK_O
+SAMPLER = 'HMC-within-Gibbs (NumPyro HMCGibbs, jittered fixed-length HMC)'
 
 # -------- batched data --------
 P_all, T = RP.signals.shape[1], RP.signals.shape[0]
 PARTS = np.arange(P_all)
 COND = np.asarray(RP.true_order, dtype=np.int64)     # (P,) condition index 0..5
-N_COND = len(RP.order_labels)
+N_COND = W = len(RP.order_labels)
 U = jnp.asarray(np.ascontiguousarray(RP.signals.transpose(1, 0, 2)), dtype=jnp.int32)
 C = jnp.asarray(np.ascontiguousarray(RP.cand_mean.transpose(1, 0, 2, 3)), dtype=jnp.int32)
 CH = jnp.asarray(np.ascontiguousarray(RP.choices.T), dtype=jnp.int32)
 WO = jnp.asarray(RP.word_orders, dtype=jnp.int32)
+COND_J = jnp.asarray(COND)
+MU0 = jnp.asarray(PRIOR_MU0, jnp.float32)
+SD0 = jnp.asarray(PRIOR_SD0, jnp.float32)
 
 
-# -------- per-ppt traj sweep (vmap'd) --------
+# -------- latent trajectories --------
 
 @jax.jit
 def sweep_all(key, B, O, tpar):
-    """One vmap'd Gibbs sweep across all P_all participants.
-    Inputs:  B (P, T, 7) int8, O (P, T) int8, tpar (P, N_TPAR) float32
-    Returns: (key, B_new, O_new)
-    """
+    """One Gibbs sweep of (B, O) for all participants given tpar (P, K).
+    B (P, T, 7) int8, O (P, T) int8. Returns (key, B_new, O_new)."""
     keys = random.split(key, P_all + 1)
-    nat = NB.to_nat(tpar)                                        # (P, 5)
-    _, B_new, O_new = vmap(NB.traj_sweep,
-                           in_axes=(0, 0, 0, 0, 0, 0, 0, None, None))(
-        keys[1:], B, O, nat, U, C, CH, WO, N_FFBS)
+    _, B_new, O_new = vmap(NB.traj_sweep, in_axes=(0, 0, 0, 0, 0, 0, 0, None, None))(
+        keys[1:], B, O, NB.to_nat(tpar), U, C, CH, WO, 1)
     return keys[0], B_new, O_new
 
 
 @jax.jit
 def stats_all(B, O):
-    """vmap'd stats_arrays across P_all participants. Returns a 9-tuple of
-    arrays each with a leading P axis."""
-    return vmap(NB.stats_arrays, in_axes=(0, 0, 0, 0, 0, None))(
-        B, O, U, C, CH, WO)
+    """model.stats_arrays for all participants (6-tuple, leading P axis)."""
+    return vmap(NB.stats_arrays, in_axes=(0, 0, 0, 0, 0, None))(B, O, U, C, CH, WO)
 
 
-# -------- per-ppt MH on transformed params --------
+# -------- likelihood from counts --------
 
-def _lp_one(tpar_i, stats_i, mu_i, sigma):
-    """log p(data | tpar_i) + log N(tpar_i | mu_i, sigma^2), per participant.
-    tpar_i, mu_i: (N_TPAR,) — mu_i is the participant's CONDITION mean;
-    sigma: (N_TPAR,) within-condition sd (shared across conditions)."""
-    ll = NB.loglik(NB.to_nat(tpar_i), *stats_i)
-    diffs = (tpar_i - mu_i) / sigma
-    pr = (-0.5 * diffs ** 2 - jnp.log(sigma)).sum()
-    return ll + pr
+N1 = 25          # n1 (number of available single moves) takes values 0..24
 
 
-PROP_SD_J = jnp.asarray(PROP_SD, dtype=jnp.float32)
+def hist_stats(nS, surv, mt, n1, n2, nO):
+    """One participant's stats_arrays collapsed into counts:
+    em (4, 2)  trials by number of surviving candidates (1..4) x chosen survives,
+    mtc (3,)   number of single moves, swaps, impossible transitions,
+    n1h (N1,)  trials by number of available single moves,
+    oc (4,)    order transitions UNK->UNK, UNK->order, order stays, order switches."""
+    em = jnp.zeros((4, 2)).at[nS.astype(jnp.int32) - 1, surv.astype(jnp.int32)].add(1.0)
+    mtc = jnp.stack([(mt == 1).sum(), (mt == 2).sum(), (mt == -1).sum()]).astype(jnp.float32)
+    n1h = jnp.zeros(N1).at[n1.astype(jnp.int32)].add(1.0)
+    comm = nO[:NB.N_O, :NB.N_O]
+    oc = jnp.stack([nO[UNK_O, UNK_O], nO[UNK_O, :NB.N_O].sum(),
+                    jnp.trace(comm), comm.sum() - jnp.trace(comm)])
+    return em, mtc, n1h, oc
 
 
-def _mh4_one(keys4, tpar_i, stats_i, mu_i, sigma):
-    """Coordinate-wise MH on tpar_i: one random-walk proposal per transformed
-    coordinate k = 0..N_TPAR-1 in turn, with proposal sd PROP_SD[k]. Returns
-    the updated tpar_i and a (N_TPAR,) vector of accept indicators.
-
-    Why coordinate-wise: the four coordinates have posterior widths that
-    differ by more than an order of magnitude (log_kappa ~0.08 vs
-    logit_p_commit ~1.2). A joint isotropic proposal (the previous kernel,
-    sd 0.25 on all four) was vetoed by the tight coordinate and crawled on
-    the wide one (lag-4 autocorrelation 0.90 on logit_p_commit). Updating
-    one coordinate at a time with its own scale removes both problems.
-
-    Proposal symmetry: each step is a Gaussian random walk on one coordinate,
-    q(t' | t) = q(t | t'), so the accept ratio reduces to
-    log_u < new_lp - old_lp with no Hastings correction.
-    """
-    cur = _lp_one(tpar_i, stats_i, mu_i, sigma)
-
-    def step(carry, inp):
-        k, key = inp
-        tpar, cur = carry
-        k_prop, k_acc = random.split(key)
-        prop = tpar.at[k].add(PROP_SD_J[k] * random.normal(k_prop))
-        new = _lp_one(prop, stats_i, mu_i, sigma)
-        log_u = jnp.log(random.uniform(k_acc))
-        accept = log_u < (new - cur)
-        return (jnp.where(accept, prop, tpar),
-                jnp.where(accept, new, cur)), accept.astype(jnp.int32)
-    (tpar_new, _), acc = lax.scan(step, (tpar_i, cur),
-                                  (jnp.arange(N_TPAR), keys4))
-    return tpar_new, acc
+def loglik_hist(params, em, mtc, n1h, oc):
+    """model.loglik from the counts of hist_stats (natural-scale params)."""
+    lam, eps_o, kappa, kappa_s, p_commit_o = params
+    nS = jnp.arange(1, 5, dtype=jnp.float32)[:, None]
+    sv = jnp.arange(2, dtype=jnp.float32)[None, :]
+    lp_em = xlogy(em, NB.emit_p(nS, sv, lam)).sum()
+    lp_mv = (-mtc[0] * kappa - mtc[1] * kappa_s + jnp.where(mtc[2] > 0, -jnp.inf, 0.0)
+             - (n1h * jnp.log1p(jnp.arange(N1) * jnp.exp(-kappa))).sum())
+    lp_o = (xlogy(oc[0], 1 - p_commit_o) + xlogy(oc[1], p_commit_o / NB.N_O)
+            + xlogy(oc[2], 1 - eps_o) + xlogy(oc[3], eps_o / (NB.N_O - 1)))
+    return lp_em + lp_mv + lp_o
 
 
-def _ll_one(tpar_i, stats_i):
-    """Data log-likelihood only (no hierarchy term), per participant."""
-    return NB.loglik(NB.to_nat(tpar_i), *stats_i)
+STATS = ('em', 'mtc', 'n1h', 'oc')
+# Gibbs sites: latents (stored as float, B shifted by +1) and their counts
+GIBBS_SHAPES = dict(B=(P_all, T, 7), O=(P_all, T), em=(P_all, 4, 2), mtc=(P_all, 3),
+                    n1h=(P_all, N1), oc=(P_all, 4))
 
 
-COND_J = jnp.asarray(COND)
-SHIFT_SD_J = jnp.asarray(SHIFT_SD, dtype=jnp.float32)
-SHIFT_SD_POP_J = jnp.asarray(SHIFT_SD_POP, dtype=jnp.float32)
-PRIOR_MU0_J = jnp.asarray(PRIOR_MU0, dtype=jnp.float32)
-PRIOR_SD0_J = jnp.asarray(PRIOR_SD0, dtype=jnp.float32)
+def with_stats(B, O):
+    """Gibbs-site dict for latents (B, O)."""
+    st = vmap(hist_stats)(*stats_all(B, O))
+    d = {'B': B.astype(jnp.float32) + 1, 'O': O.astype(jnp.float32)}
+    d.update({n: x.astype(jnp.float32) for n, x in zip(STATS, st)})
+    return d
 
 
-@jax.jit
-def shift_all(key, tpar, stats, mu, m, tau, sd=SHIFT_SD_J, sd_pop=SHIFT_SD_POP_J):
-    """Group shift move: for each coordinate k in turn and each condition w
-    (in parallel; conditions touch disjoint participants), propose adding
-    one delta ~ N(0, sd[k]^2) to mu[w, k] AND to tpar[p, k] for every
-    participant p in condition w. Accept/reject per (w, k).
+# -------- NumPyro model --------
 
-    Why: eps_o (and to a lesser degree p_commit) participants are
-    data-starved, so tpar_p | mu_w sits at mu_w + noise and mu_w | tpar sits
-    at mean(tpar) +- sigma/sqrt(n): the alternating conjugate scheme moves a
-    condition mean by ~sigma/sqrt(n) per iteration while its marginal is
-    several times wider (lag-4 acf ~0.9 on the eps_o condition means, ESS
-    ~3 per 600 draws). A common shift relocates the whole group at once.
-
-    Accept ratio: the within-condition Gaussian terms are invariant under a
-    common shift (tpar_p - mu_w unchanged), so only the participants'
-    data log-likelihood changes and the prior N(mu_w | m, tau) enter.
-    The proposal is symmetric (delta vs -delta), no Hastings correction.
-
-    Second stage, population level: the same coupling exists one level up
-    (m | mu has sd tau/sqrt(W) while its marginal is far wider for the
-    data-starved coordinates), so for each k also propose one delta ~
-    N(0, sd_pop[k]^2) added to m[k], every mu[w, k] and every tpar[p, k].
-    Now the mu | m terms cancel as well; only the total likelihood change
-    and the prior N(m | mu0, sd0) enter.
-
-    tpar (P, K), stats leaf-wise (P, ...), mu (W, K), m (K,), tau (K,),
-    sd, sd_pop (K,). Returns (key, tpar_new, mu_new, m_new, acc (W, K),
-    acc_pop (K,)) with 0/1 accept indicators.
-    """
-    ll_cur = vmap(_ll_one)(tpar, stats)                                # (P,)
-
-    def step(carry, inp):
-        k, key = inp
-        tpar, mu, ll_cur = carry
-        k_prop, k_acc = random.split(key)
-        delta = sd[k] * random.normal(k_prop, (N_COND,))              # (W,)
-        tpar_prop = tpar.at[:, k].add(delta[COND_J])
-        ll_prop = vmap(_ll_one)(tpar_prop, stats)                      # (P,)
-        dll = jax.ops.segment_sum(ll_prop - ll_cur, COND_J,
-                                  num_segments=N_COND)                 # (W,)
-        mu_k, mu_prop_k = mu[:, k], mu[:, k] + delta
-        dprior = (-0.5 * ((mu_prop_k - m[k]) / tau[k]) ** 2
-                  + 0.5 * ((mu_k - m[k]) / tau[k]) ** 2)
-        accept = jnp.log(random.uniform(k_acc, (N_COND,))) < dll + dprior
-        acc_p = accept[COND_J]
-        tpar = tpar.at[:, k].set(jnp.where(acc_p, tpar_prop[:, k], tpar[:, k]))
-        mu = mu.at[:, k].set(jnp.where(accept, mu_prop_k, mu_k))
-        ll_cur = jnp.where(acc_p, ll_prop, ll_cur)
-        return (tpar, mu, ll_cur), accept.astype(jnp.int32)
-    keys = random.split(key, 2 * N_TPAR + 1)
-    (tpar, mu, ll_cur), acc = lax.scan(step, (tpar, mu, ll_cur),
-                                       (jnp.arange(N_TPAR), keys[1:N_TPAR + 1]))
-
-    def step_pop(carry, inp):
-        k, key = inp
-        tpar, mu, m, ll_cur = carry
-        k_prop, k_acc = random.split(key)
-        delta = sd_pop[k] * random.normal(k_prop)
-        tpar_prop = tpar.at[:, k].add(delta)
-        ll_prop = vmap(_ll_one)(tpar_prop, stats)
-        m_prop = m[k] + delta
-        dprior = (-0.5 * ((m_prop - PRIOR_MU0_J[k]) / PRIOR_SD0_J[k]) ** 2
-                  + 0.5 * ((m[k] - PRIOR_MU0_J[k]) / PRIOR_SD0_J[k]) ** 2)
-        accept = jnp.log(random.uniform(k_acc)) < (ll_prop - ll_cur).sum() + dprior
-        tpar = jnp.where(accept, tpar_prop, tpar)
-        mu = mu.at[:, k].set(jnp.where(accept, mu[:, k] + delta, mu[:, k]))
-        m = m.at[k].set(jnp.where(accept, m_prop, m[k]))
-        ll_cur = jnp.where(accept, ll_prop, ll_cur)
-        return (tpar, mu, m, ll_cur), accept.astype(jnp.int32)
-    (tpar, mu, m, _), acc_pop = lax.scan(step_pop, (tpar, mu, m, ll_cur),
-                                         (jnp.arange(N_TPAR), keys[N_TPAR + 1:]))
-    return keys[0], tpar, mu, m, acc.T, acc_pop                       # (W,K), (K,)
+def tpar_from(h):
+    """Participant parameters (P, K) from the non-centred HMC sites."""
+    mu = h['m'] + jnp.sqrt(h['tau2']) * h['mu_raw']
+    return mu[COND_J] + jnp.sqrt(h['sigma2']) * h['z']
 
 
-@jax.jit
-def mh_all(key, tpar, stats, mu_p, sigma):
-    """vmap _mh4_one across participants.
-    tpar (P, N_TPAR), stats leaf-wise (P, ...), mu_p (P, N_TPAR) = condition
-    mean per participant, sigma (N_TPAR,). Returns (key, tpar_new, n_acc)
-    with n_acc (P, N_TPAR) accept indicators."""
-    keys = random.split(key, P_all * N_TPAR + 1).reshape(-1, 2)
-    mh_keys = keys[1:].reshape(P_all, N_TPAR, 2)
-    tpar_new, n_acc = vmap(_mh4_one, in_axes=(0, 0, 0, 0, None))(
-        mh_keys, tpar, stats, mu_p, sigma)
-    return keys[0], tpar_new, n_acc
+def model():
+    m = numpyro.sample('m', dist.Normal(MU0, SD0).to_event(1))
+    tau2 = numpyro.sample('tau2', dist.InverseGamma(A_TAU, B_TAU).expand([K]).to_event(1))
+    sigma2 = numpyro.sample('sigma2', dist.InverseGamma(A0, B0).expand([K]).to_event(1))
+    mu_raw = numpyro.sample('mu_raw', dist.Normal(0., 1.).expand([W, K]).to_event(2))
+    z = numpyro.sample('z', dist.Normal(0., 1.).expand([P_all, K]).to_event(2))
+    mu = m + jnp.sqrt(tau2) * mu_raw
+    tpar = mu[COND_J] + jnp.sqrt(sigma2) * z
+    numpyro.deterministic('mu', mu)
+    numpyro.deterministic('tpar', tpar)
+    site = {n: numpyro.sample(n, dist.ImproperUniform(constraints.real, (), s))
+            for n, s in GIBBS_SHAPES.items()}
+    numpyro.factor('loglik', vmap(loglik_hist)(NB.to_nat(tpar), *[site[n] for n in STATS]).sum())
 
 
-# -------- conjugate hyper update (numpy) --------
+def gibbs_fn(rng_key, gibbs_sites, hmc_sites):
+    """Redraw (B, O) for all participants given the HMC sites."""
+    keys = random.split(rng_key, P_all)
+    _, B, O = vmap(NB.traj_sweep, in_axes=(0, 0, 0, 0, 0, 0, 0, None, None))(
+        keys, jnp.round(gibbs_sites['B'] - 1).astype(jnp.int8),
+        jnp.round(gibbs_sites['O']).astype(jnp.int8), NB.to_nat(tpar_from(hmc_sites)),
+        U, C, CH, WO, 1)
+    return with_stats(B, O)
 
-def init_hyper():
-    """Initial hyper state: every condition mean at HYPER_INIT mu."""
-    return dict(mu=np.tile(HYPER_INIT[:, 0], (N_COND, 1)),   # (W, K)
-                sigma=HYPER_INIT[:, 1].copy(),                # (K,)
-                m=HYPER_INIT[:, 0].copy(),                    # (K,)
-                tau=np.full(N_TPAR, TAU_INIT))                # (K,)
+
+class JitterHMC(HMC):
+    """HMC whose trajectory length is redrawn every iteration, independently of
+    the state (so the kernel stays reversible): uniform on [0.5, 1.5] x base."""
+    def __init__(self, model, base, **kw):
+        super().__init__(model, trajectory_length=base, **kw)
+        self._base = base
+
+    def sample(self, state, model_args, model_kwargs):
+        u = random.uniform(random.fold_in(state.rng_key, 7), minval=0.5, maxval=1.5)
+        return super().sample(state._replace(trajectory_length=self._base * u),
+                              model_args, model_kwargs)
 
 
-def update_hyper(x, cond, hyp, rng, mu0=PRIOR_MU0, sd0=PRIOR_SD0,
-                 a0=A0, b0=B0, a_tau=A_TAU, b_tau=B_TAU):
-    """One Gibbs pass over the hyperparameters given x = tpar (P, K) and
-    condition index cond (P,). Every block is conjugate:
-
-      mu[w]   | rest ~ N( (sum_{p in w} x_p / sigma^2 + m / tau^2) / prec,
-                          1 / prec ),   prec = n_w / sigma^2 + 1 / tau^2
-      sigma^2 | rest ~ IG( a0 + P/2,  b0 + 0.5 * sum_p (x_p - mu[w(p)])^2 )
-      m       | rest ~ N( (sum_w mu[w] / tau^2 + mu0 / sd0^2) / prec_m,
-                          1 / prec_m ), prec_m = W / tau^2 + 1 / sd0^2
-      tau^2   | rest ~ IG( a_tau + W/2,  b_tau + 0.5 * sum_w (mu[w] - m)^2 )
-
-    All operations are vectorised over the K parameter dimensions.
-    """
-    mu, sigma, m, tau = hyp['mu'].copy(), hyp['sigma'], hyp['m'], hyp['tau']
-    P, K = x.shape
-    W = mu.shape[0]
-    # condition means
-    for w in range(W):
-        xw = x[cond == w]
-        n = len(xw)
-        prec = n / sigma ** 2 + 1.0 / tau ** 2
-        mean = (xw.sum(axis=0) / sigma ** 2 + m / tau ** 2) / prec
-        mu[w] = rng.normal(mean, 1.0 / np.sqrt(prec))
-    # within-condition sd (shared across conditions)
-    resid = x - mu[cond]
-    a_n = a0 + P / 2.0
-    b_n = b0 + 0.5 * (resid ** 2).sum(axis=0)
-    sigma = np.sqrt(1.0 / rng.gamma(a_n, 1.0 / b_n))
-    # population mean
-    prec_m = W / tau ** 2 + 1.0 / sd0 ** 2
-    mean_m = (mu.sum(axis=0) / tau ** 2 + mu0 / sd0 ** 2) / prec_m
-    m = rng.normal(mean_m, 1.0 / np.sqrt(prec_m))
-    # between-condition sd
-    a_t = a_tau + W / 2.0
-    b_t = b_tau + 0.5 * ((mu - m[None, :]) ** 2).sum(axis=0)
-    tau = np.sqrt(1.0 / rng.gamma(a_t, 1.0 / b_t))
-    return dict(mu=mu, sigma=sigma, m=m, tau=tau)
+def start_values(seed):
+    """Dispersed starting point (unconstrained scale for tau2, sigma2), latents all-UNK."""
+    r = np.random.default_rng(seed)
+    B0_ = jnp.full((P_all, T, 7), -1, jnp.int8)
+    O0_ = jnp.full((P_all, T), UNK_O, jnp.int8)
+    tau2 = jnp.log(jnp.full(K, TAU_INIT ** 2))
+    sigma2 = jnp.log(jnp.asarray(HYPER_INIT[:, 1] ** 2, jnp.float32))
+    ini = with_stats(B0_, O0_)
+    ini['m'] = MU0 + jnp.asarray(r.normal(0, 0.5, (K,)), jnp.float32)
+    ini['mu_raw'] = jnp.asarray(r.normal(0, 1, (W, K)), jnp.float32)
+    ini['z'] = jnp.asarray(r.normal(0, 1, (P_all, K)), jnp.float32)
+    ini['tau2'] = tau2 + jnp.asarray(r.normal(0, 0.5, (K,)), jnp.float32)
+    ini['sigma2'] = sigma2 + jnp.asarray(r.normal(0, 0.5, (K,)), jnp.float32)
+    return ini
 
 
 # -------- one chain --------
 
-def _load_ckpt(ckpt_path, seed):
-    """Return a usable checkpoint dict for this chain, or None. A checkpoint
-    is usable if RESUME is set, it exists, was written by this code version
-    (carries `state`), has the same seed and config (kernel settings, priors,
-    fixed constants, data), and is not further along than N_OUTER."""
-    if not RESUME or not os.path.exists(ckpt_path):
-        return None
-    with open(ckpt_path, 'rb') as f:
-        ck = pickle.load(f)
-    cfg = ck.get('config')
-    if 'state' not in ck or ck.get('seed') != seed or cfg != _config_tuple():
-        print(f'  checkpoint {os.path.basename(ckpt_path)} not resumable '
-              f'(old format, other seed, or other config/prior) — restarting chain',
-              flush=True)
-        return None
-    if ck['it'] > N_OUTER:
-        # The retained-sample buffers are sized from N_OUTER and the sampler
-        # state is at outer iteration ck['it']; a longer chain cannot be
-        # truncated back, so refuse rather than crash or mis-normalise.
-        raise SystemExit(
-            f'checkpoint {os.path.basename(ckpt_path)} is at outer iteration '
-            f'{ck["it"]} > N_OUTER={N_OUTER}. Re-run with N_OUTER >= {ck["it"]} '
-            f'to reuse it, or with RESUME=0 to restart the chain.')
-    return ck
-
-
-def fmt_acc(rate):
-    """Per-coordinate MH acceptance rates as 'a/b/c/d'."""
-    return '/'.join(f'{r:.2f}' for r in np.atleast_1d(rate))
-
-
-def _config_tuple():
-    # Everything that defines the posterior target or the kernel, so that a
-    # checkpoint sampled under a different prior / model / data is refused.
-    # N_OUTER is deliberately not included: a finished chain can be extended
-    # by re-running with RESUME=1 and a larger N_OUTER (see _load_ckpt).
+def config_tuple():
+    """Everything that defines the target or the kernel; a chain file with a
+    different config is not reused by RESUME."""
     def _t(a):
         return tuple(float(x) for x in np.ravel(a))
-    return (BURN, THIN, N_FFBS, P_all, T, N_TPAR,
-            tuple(int(c) for c in COND),
-            _t(PROP_SD), _t(SHIFT_SD), _t(SHIFT_SD_POP),
-            _t(HYPER_INIT), float(TAU_INIT), _t(PRIOR_MU0), _t(PRIOR_SD0),
-            float(A0), float(B0), float(A_TAU), float(B_TAU),
-            float(NB.KAPPA_S_FIXED))
+    return (SAMPLER, N_WARMUP, N_SAMPLES, THIN, TRAJ, P_all, T, N_TPAR,
+            tuple(int(c) for c in COND), _t(HYPER_INIT), float(TAU_INIT),
+            _t(PRIOR_MU0), _t(PRIOR_SD0), float(A0), float(B0), float(A_TAU),
+            float(B_TAU), float(NB.KAPPA_S_FIXED))
 
 
-def run_chain(chain_id, seed, ckpt_path):
-    rng = np.random.default_rng(seed)
-    key = random.PRNGKey(seed)
+def chain_path(out_dir, k):
+    return Path(out_dir) / f'hier_chain{k}.pkl'
 
-    # state (the O init is irrelevant — the first sweep's FFBS replaces it)
-    B = jnp.full((P_all, T, 7), -1, dtype=jnp.int8)
-    O = jnp.full((P_all, T), UNK_O, dtype=jnp.int8)
-    tpar = jnp.asarray(np.tile(HYPER_INIT[:, 0], (P_all, 1)),
-                       dtype=jnp.float32)                    # (P, N_TPAR)
-    hyp = init_hyper()
 
-    # The record condition below fires ceil((N_OUTER - BURN) / THIN) times.
-    n_samp = -(-(N_OUTER - BURN) // THIN)
-    hyper_samp = dict(mu=np.zeros((n_samp, N_COND, N_TPAR), dtype=np.float32),
-                      sigma=np.zeros((n_samp, N_TPAR), dtype=np.float32),
-                      m=np.zeros((n_samp, N_TPAR), dtype=np.float32),
-                      tau=np.zeros((n_samp, N_TPAR), dtype=np.float32))
-    tpar_samp = np.zeros((n_samp, P_all, N_TPAR), dtype=np.float32)
-    # Full per-ppt (B, O) joint samples.
-    # Storage: ~46 MB (B) + ~6.5 MB (O) per chain at default config.
-    B_samp = np.zeros((n_samp, P_all, T, 7), dtype=np.int8)
-    O_samp = np.zeros((n_samp, P_all, T), dtype=np.int8)
-    acc_count = np.zeros(N_TPAR, dtype=np.int64)    # MH acceptances per coord
-    shift_count = np.zeros(N_TPAR, dtype=np.int64)  # group-shift acceptances per coord
-    pshift_count = np.zeros(N_TPAR, dtype=np.int64) # population-shift acceptances per coord
-    si = 0
-    it0 = 0
+def load_chain(out_dir, k):
+    """Finished chain k from out_dir if it exists and matches the current config, else None."""
+    p = chain_path(out_dir, k)
+    if not p.exists():
+        return None
+    with open(p, 'rb') as f:
+        ch = pickle.load(f)
+    if ch.get('config') != config_tuple() or ch.get('seed') != SEED0 + k:
+        print(f'  {p.name}: other config or seed, not reused', flush=True)
+        return None
+    return ch
 
-    # ---- resume from a checkpoint written by this code version ----
-    ck = _load_ckpt(ckpt_path, seed)
-    if ck is not None:
-        st = ck['state']
-        B, O = jnp.asarray(st['B']), jnp.asarray(st['O'])
-        tpar = jnp.asarray(st['tpar'], dtype=jnp.float32)
-        hyp = st['hyp']
-        rng.bit_generator.state = st['rng_state']
-        key = jnp.asarray(st['key'], dtype=jnp.uint32)
-        acc_count = st['acc_count']
-        shift_count = st['shift_count']
-        pshift_count = st['pshift_count']
-        si = ck['tpar'].shape[0]
-        for k in hyper_samp:
-            hyper_samp[k][:si] = ck['hyper'][k]
-        tpar_samp[:si], B_samp[:si], O_samp[:si] = ck['tpar'], ck['B'], ck['O']
-        it0 = ck['it']
-        print(f'[chain {chain_id}] resuming from checkpoint at outer {it0}/{N_OUTER} '
-              f'({si} samples)', flush=True)
 
+FIELDS = ('hmc_state.num_steps', 'hmc_state.diverging', 'hmc_state.adapt_state.step_size')
+
+
+def run_chain(k):
+    """Run chain k (seed SEED0 + k) and return it as a dict in the fit format."""
+    seed = SEED0 + k
+    ini = start_values(seed)
+    kernel = HMCGibbs(JitterHMC(model, TRAJ), gibbs_fn=gibbs_fn, gibbs_sites=list(GIBBS_SHAPES))
+    # progress_bar=True segfaults with this JAX/NumPyro combination
+    mcmc = MCMC(kernel, num_warmup=N_WARMUP, num_samples=N_SAMPLES, thinning=THIN,
+                progress_bar=False)
     t0 = time.time()
+    mcmc.warmup(random.PRNGKey(seed), init_params=ini, extra_fields=FIELDS,
+                collect_warmup=False)
+    jax.block_until_ready(mcmc.post_warmup_state)
+    t1 = time.time()
+    # init_params again: without it run() fails with "invalid log_factor"
+    mcmc.run(mcmc.post_warmup_state.rng_key, init_params=ini, extra_fields=FIELDS)
+    smp = mcmc.get_samples()
+    jax.block_until_ready(smp['mu'])
+    t2 = time.time()
+    ex = mcmc.get_extra_fields()
+    hmc = dict(steps=np.asarray(ex['hmc_state.num_steps']),
+               div=np.asarray(ex['hmc_state.diverging']),
+               step_size=np.asarray(ex['hmc_state.adapt_state.step_size']),
+               warm_secs=t1 - t0, samp_secs=t2 - t1)
+    ch = dict(chain_id=k, seed=seed, it=N_SAMPLES, config=config_tuple(),
+              hyper=dict(mu=np.asarray(smp['mu']), sigma=np.sqrt(np.asarray(smp['sigma2'])),
+                         m=np.asarray(smp['m']), tau=np.sqrt(np.asarray(smp['tau2']))),
+              tpar=np.asarray(smp['tpar']),
+              B=(np.rint(np.asarray(smp['B'])) - 1).astype(np.int8),
+              O=np.rint(np.asarray(smp['O'])).astype(np.int8),
+              hmc=hmc, parts=PARTS, acc=RP.accuracy[PARTS])
+    print(f'[chain {k}] seed {seed}: warm-up {t1 - t0:.0f}s, sampling {t2 - t1:.0f}s '
+          f'(both incl. compile), {ch["tpar"].shape[0]} draws, mean leapfrog steps '
+          f'{hmc["steps"].mean():.0f}, step size {hmc["step_size"][-1]:.4f}, '
+          f'divergences {int(hmc["div"].sum())}', flush=True)
+    return ch
 
-    def _chain_dict(it, with_state=False):
-        d = dict(chain_id=chain_id, seed=seed, it=it, config=_config_tuple(),
-                 hyper={k: v[:si] for k, v in hyper_samp.items()},
-                 tpar=tpar_samp[:si], B=B_samp[:si], O=O_samp[:si],
-                 mh_accept_rate=acc_count / max(it * P_all, 1),   # (N_TPAR,)
-                 shift_accept_rate=shift_count / max(it * N_COND, 1),  # (N_TPAR,)
-                 pop_shift_accept_rate=pshift_count / max(it, 1),        # (N_TPAR,)
-                 parts=PARTS, acc=RP.accuracy[PARTS])
-        if with_state:      # everything needed to continue the chain exactly
-            d['state'] = dict(B=np.asarray(B), O=np.asarray(O),
-                              tpar=np.asarray(tpar), hyp=hyp,
-                              rng_state=rng.bit_generator.state,
-                              key=np.asarray(key), acc_count=acc_count,
-                              shift_count=shift_count, pshift_count=pshift_count)
-        return d
 
-    if it0 >= N_OUTER:
-        print(f'[chain {chain_id}] already complete — reusing checkpoint', flush=True)
-        return _chain_dict(N_OUTER)
-
-    for it in range(it0, N_OUTER):
-        # 1) Gibbs sweep B, O (vmap'd)
-        key, B, O = sweep_all(key, B, O, tpar)
-        # 2) stats (vmap'd)
-        stats = stats_all(B, O)
-        # 3) MH on tpar (vmap'd) given each ppt's condition mean
-        mu_p = jnp.asarray(hyp['mu'][COND], dtype=jnp.float32)
-        key, tpar, n_acc = mh_all(key, tpar, stats, mu_p,
-                                  jnp.asarray(hyp['sigma'], dtype=jnp.float32))
-        acc_count += np.asarray(n_acc).sum(axis=0)
-        # 3b) group shift move on (mu[w, k], tpar[p in w, k])
-        key, tpar, mu_new, m_new, s_acc, p_acc = shift_all(
-            key, tpar, stats, jnp.asarray(hyp['mu'], dtype=jnp.float32),
-            jnp.asarray(hyp['m'], dtype=jnp.float32),
-            jnp.asarray(hyp['tau'], dtype=jnp.float32))
-        hyp['mu'] = np.asarray(mu_new, dtype=np.float64)
-        hyp['m'] = np.asarray(m_new, dtype=np.float64)
-        shift_count += np.asarray(s_acc).sum(axis=0)
-        pshift_count += np.asarray(p_acc)
-        # 4) conjugate hyper update (numpy)
-        tpar_np = np.asarray(tpar)
-        hyp = update_hyper(tpar_np, COND, hyp, rng)
-        # 5) record
-        if it >= BURN and (it - BURN) % THIN == 0:
-            for k in hyper_samp:
-                hyper_samp[k][si] = hyp[k]
-            tpar_samp[si] = tpar_np
-            B_samp[si] = np.asarray(B)
-            O_samp[si] = np.asarray(O)
-            si += 1
-        # 6) progress + checkpoint
-        if (it + 1) % 25 == 0:
-            B.block_until_ready()
-            el = time.time() - t0
-            eta = el / (it + 1 - it0) * (N_OUTER - it - 1) / 60
-            print(f'[chain {chain_id}] outer {it+1}/{N_OUTER}  '
-                  f'({el:.0f}s, eta {eta:.1f}m, MH acc '
-                  f'{fmt_acc(acc_count / ((it + 1) * P_all))}, shift acc '
-                  f'{fmt_acc(shift_count / ((it + 1) * N_COND))}, pop '
-                  f'{fmt_acc(pshift_count / (it + 1))})', flush=True)
-        if (it + 1) % CKPT_EVERY == 0 or it + 1 == N_OUTER:
-            with open(ckpt_path, 'wb') as f:
-                pickle.dump(_chain_dict(it + 1, with_state=True), f)
-
-    return _chain_dict(N_OUTER)
+def save_chain(ch, out_dir):
+    p = chain_path(out_dir, ch['chain_id'])
+    with open(p, 'wb') as f:
+        pickle.dump(ch, f)
+    return p
 
 
 def save_fit(chains, out_path):
-    """Write the fit pickle (also used by the smoke test) and its signature
-    sidecar (io.write_fit_signature), against which the pickles written
-    by 02_postprocess.py are checked for staleness."""
-    fit = dict(chains=chains, n_outer=N_OUTER, burn=BURN, thin=THIN,
+    """Write the fit pickle and its signature sidecar (io.write_fit_signature),
+    against which the pickles written by 02_postprocess.py are checked for
+    staleness. n_outer / burn count iterations including warm-up."""
+    fit = dict(chains=chains, n_outer=N_WARMUP + N_SAMPLES, burn=N_WARMUP, thin=THIN,
+               n_warmup=N_WARMUP, n_samples=N_SAMPLES, traj=TRAJ, sampler=SAMPLER,
                n_tpar=N_TPAR, param_names=CFG.PARAM_NAMES,
                parts=PARTS, acc=RP.accuracy[PARTS],
                cond=COND, cond_labels=list(RP.order_labels),
-               traj_subset=TRAJ_SUBSET,
-               # prior config — saved so downstream scripts don't
-               # have to duplicate it.
+               # prior config, saved so downstream scripts don't duplicate it
                hyper_init=HYPER_INIT, tau_init=TAU_INIT,
                prior_mu0=PRIOR_MU0, prior_sd0=PRIOR_SD0,
                a0=A0, b0=B0, a_tau=A_TAU, b_tau=B_TAU,
@@ -478,20 +313,3 @@ def save_fit(chains, out_path):
     with open(str(out_path), 'wb') as f:
         pickle.dump(fit, f)
     IO.write_fit_signature(fit, Path(out_path).parent)
-
-
-def print_condition_means(chains):
-    """Posterior-median condition means on the natural scale, per chain."""
-    print('\n=== condition means (posterior median over samples) per chain ===')
-    names = ['lambda', 'kappa', 'eps_o', 'p_commit']
-    for ch in chains:
-        mu = ch['hyper']['mu']                                 # (S, W, K)
-        print(f'chain {ch["chain_id"]} (seed {ch["seed"]}, MH acc '
-              f'{fmt_acc(ch["mh_accept_rate"])}, shift acc '
-              f'{fmt_acc(ch.get("shift_accept_rate", np.nan))}, pop '
-              f'{fmt_acc(ch.get("pop_shift_accept_rate", np.nan))})')
-        print(f'  {"cond":>5}  ' + '  '.join(f'{n:>8}' for n in names))
-        for w, lbl in enumerate(RP.order_labels):
-            nat = np.asarray(NB.to_nat(jnp.asarray(np.median(mu[:, w], axis=0))))
-            lam, eps, kap, _, pc = nat
-            print(f'  {lbl:>5}  {lam:>8.3f}  {kap:>8.2f}  {eps:>8.4f}  {pc:>8.4f}')

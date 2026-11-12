@@ -6,9 +6,9 @@
      n_single e^-kappa / Z, so the total number of single moves is compared
      with its expectation +- 3 sd; the order chain's commit / switch counts
      are compared with p_commit_o / eps_o the same way.
-  2. simulate.choice_probs agrees with model.emit_p_correct (candidate 0) and
-     with exp(model.emission_lp) for every candidate, bit for bit, on
-     simulated and on posterior-like trajectories.
+  2. simulate.choice_probs agrees with exp(model.emission_lp) for every
+     candidate, and its rows sum to 1, on simulated and on posterior-like
+     trajectories.
   3. The data log-likelihood of a simulated participant is maximised near the
      true parameters: over 60 simulated participants, the pooled profile
      log-likelihood in each transformed coordinate (others at truth) peaks
@@ -47,14 +47,17 @@ def test_simulate():
     stats = jax.jit(vmap(NB.stats_arrays, in_axes=(0, 0, 0, 0, 0, None)))(
         jnp.asarray(B), jnp.asarray(O), jnp.asarray(U[idx]), jnp.asarray(C[idx]),
         jnp.asarray(CH, jnp.int32), jnp.asarray(WO))
-    nS, surv, mt, nsa, nwa, n_unk_stay, n_commit, n_o_stay, n_o_switch = map(np.asarray, stats)
+    nS, surv, mt, nsa, nwa, nO = map(np.asarray, stats)
+    n_unk_stay, n_commit = nO[:, NB.UNK_O, NB.UNK_O], nO[:, NB.UNK_O, :NB.N_O].sum(-1)
+    n_o_stay = np.trace(nO[:, :NB.N_O, :NB.N_O], axis1=1, axis2=2)
+    n_o_switch = nO[:, :NB.N_O, :NB.N_O].sum((1, 2)) - n_o_stay
     tr_lp = np.asarray(jax.jit(vmap(vmap(NB._transition_lp, in_axes=(0, 0, 0, None, None)),
                                     in_axes=(0, 0, 0, None, None)))(
         jnp.asarray(B[:, :-1]), jnp.asarray(B[:, 1:]), jnp.asarray(U[idx, 1:]),
         jnp.float32(kappa), jnp.float32(NB.KAPPA_S_FIXED)))
     ok1 = np.isfinite(tr_lp).all() and (mt >= 0).all()
     Z = 1.0 + nsa * np.exp(-kappa) + nwa * np.exp(-NB.KAPPA_S_FIXED)
-    p_single = (nsa * np.exp(-kappa) / Z)[:, 1:]
+    p_single = nsa * np.exp(-kappa) / Z
     exp_single, sd_single = p_single.sum(), np.sqrt((p_single * (1 - p_single)).sum())
     n_single = (mt == 1).sum()
     z_single = (n_single - exp_single) / sd_single
@@ -73,18 +76,14 @@ def test_simulate():
         pr = np.asarray(SIM.choice_probs(jnp.asarray(B_), jnp.asarray(O_),
                                          jnp.asarray(lam_, jnp.float32), jnp.asarray(U_),
                                          jnp.asarray(C_), jnp.asarray(WO)))
-        pc = np.asarray(jax.jit(vmap(lambda b, o, u, c, l: vmap(
-            NB.emit_p_correct, in_axes=(0, 0, 0, 0, None, None))(o, b, u, c, l, jnp.asarray(WO))))(
-            jnp.asarray(B_), jnp.asarray(O_), jnp.asarray(U_), jnp.asarray(C_),
-            jnp.asarray(lam_, jnp.float32)))
         e_all = np.asarray(jax.jit(vmap(lambda b, o, u, c, l: vmap(
             lambda o_t, b_t, u_t, c_t: vmap(NB.emission_lp, in_axes=(None, None, None, None, 0, None, None))(
                 o_t, b_t, u_t, c_t, jnp.arange(4), l, jnp.asarray(WO)))(o, b, u, c)))(
             jnp.asarray(B_), jnp.asarray(O_), jnp.asarray(U_), jnp.asarray(C_),
             jnp.asarray(lam_, jnp.float32)))
-        return (np.array_equal(pr[..., 0], pc), np.abs(np.exp(e_all) - pr).max(),
+        return (np.abs(np.exp(e_all) - pr).max(),
                 np.abs(pr.sum(-1) - 1).max())
-    eq0, d_all, d_sum = check_probs(B, O, np.full(NP, lam, np.float32), U[idx], C[idx])
+    d_all, d_sum = check_probs(B, O, np.full(NP, lam, np.float32), U[idx], C[idx])
     # posterior-like trajectories: partially known lexicon converging to the truth
     B2 = np.full((NP, T, NB.N_W), -1, np.int8)
     O2 = np.full((NP, T), NB.UNK_O, np.int8)
@@ -94,14 +93,13 @@ def test_simulate():
             B2[i, rng.integers(5, T):, w] = RP.inv_true[p, w]
         O2[i, rng.integers(5, T):] = RP.true_order[p]
     lam2 = rng.uniform(0.01, 0.3, NP).astype(np.float32)
-    eq0b, d_allb, d_sumb = check_probs(B2, O2, lam2, U[idx], C[idx])
-    ok2 = eq0 and eq0b and max(d_all, d_allb) < 1e-6 and max(d_sum, d_sumb) < 1e-5
-    print(f'2. choice_probs[..., 0] == emit_p_correct bitwise: {eq0 and eq0b}; '
-          f'max |exp(emission_lp) - choice_probs| {max(d_all, d_allb):.1e}; rows sum to 1 within '
+    d_allb, d_sumb = check_probs(B2, O2, lam2, U[idx], C[idx])
+    ok2 = max(d_all, d_allb) < 1e-6 and max(d_sum, d_sumb) < 1e-5
+    print(f'2. max |exp(emission_lp) - choice_probs| {max(d_all, d_allb):.1e}; rows sum to 1 within '
           f'{max(d_sum, d_sumb):.1e}: {"PASS" if ok2 else "FAIL"}')
 
     # ---- 3. profile log-likelihood peaks at the truth ----
-    ll_fn = jax.jit(vmap(lambda t, *st: NB.loglik(NB.to_nat(t), *st), in_axes=(None,) + (0,) * 9))
+    ll_fn = jax.jit(vmap(lambda t, *st: NB.loglik(NB.to_nat(t), *st), in_axes=(None,) + (0,) * 6))
     grid = np.linspace(-1.0, 1.0, 21)
     ok3 = True
     for k, name in enumerate(CFG.PARAM_NAMES):

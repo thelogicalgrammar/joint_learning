@@ -18,10 +18,16 @@ Emission:
     committed order o:  role-position match given B (lapse mixture, rate lam)
     UNK order:          bag-of-words match (decoded set ⊆ candidate set)
 
+The three model probabilities are each written once and shared by the
+trajectory sampler and the likelihood:
+    emit_p            choice probability (lapse mixture over surviving scenes)
+    move_lp           belief-move log-probability (costs, normaliser Z)
+    order_trans       order transition matrix
+
 Public functions used by the sampler (sampler.py) and the simulator:
     traj_sweep        one Gibbs pass (order FFBS + per-word belief FFBS)
-    stats_arrays      per-trial sufficient statistics
-    loglik            data log-likelihood given suff. stats and params
+    stats_arrays      sufficient statistics of (B, O, data)
+    loglik            log p(choices, B, O | params) from those statistics
 
 All functions are pure JAX and jit/vmap-able. Per-participant data is fed
 in via leading-axis batching; vmap externally across (chains, participants).
@@ -117,7 +123,7 @@ N_NAT = len(NAT_NAMES)
 I_KAPPA_S = NAT_NAMES.index('kappa_s')
 # Transformed coordinate k -> (natural slot, inverse link). This table is
 # the mapping; to_nat (JAX, hot path) and tpar_to_nat_np (numpy, downstream
-# summaries) are both generated from it, and check_ffbs.py asserts they
+# summaries) are both generated from it, and tests/test_ffbs.py asserts they
 # agree. config.PARAM_NAMES names the coordinates in the same order.
 TPAR_SPEC = ((NAT_NAMES.index('lam'), 'logit'),         # t[0] = logit(lam)
              (NAT_NAMES.index('kappa'), 'log'),         # t[1] = log(kappa)
@@ -230,93 +236,36 @@ def _survivor_mask(o, b, u, cand, WO):
     return jnp.where(o == UNK_O, surv_unk, surv_comm)    
 
 
-def _surv_stats(o, b, u, cand, choice, WO):
+def emit_stat(o, b, u, cand, choice, WO):
     """
-    Shared per-trial survivor statistics for the three emission views.
+    The two numbers the emission probability depends on, besides lam:
 
-    "No information" happens if the participant has no committed beliefs
-    about the uttered words OR if no candidate is compatible (degenerate
-    state). Either way the emission collapses to a uniform-over-4 guess.
+    nS   : float ()   number of candidate scenes that survive the belief
+    surv : float ()   1.0 iff the chosen scene survived
 
-    Arguments
-    ---------
-    o      : int  ()                order at this trial
-    b      : int8 (N_W,)            belief vector at this trial, word->meaning
-    u      : int32 (3,)             signal words at this trial
-    cand   : int32 (4, 3)           candidate scenes
-    choice : int32 ()               which candidate (0..3) to evaluate
-    WO     : int32 (N_O, 3)         position -> role table
-
-    Returns
-    -------
-    nS          : int   ()    number of surviving candidates
-    surv_choice : float ()    1.0 iff `choice` survived
-    no_info     : bool  ()    collapse-to-uniform flag (see above)
+    "No information" (no committed belief about any heard word, or no
+    surviving scene) is encoded as (nS, surv) = (4, 1), which makes emit_p
+    a uniform guess, 1/4, whatever lam. Keeping these lam-free statistics
+    apart from emit_p lets loglik() be evaluated for many parameter values
+    without re-running the survivor rule.
     """
-    # meaning of each signal word
-    bu = b[u]
-    # any of the signal words have a committed meaning?
-    any_comm = (bu != -1).any()
-    # which candidate scenes survive?
     surv = _survivor_mask(o, b, u, cand, WO)
-    # number of surviving candidates
     nS = surv.sum()
-    # did the chosen candidate survive?
-    surv_choice = surv[choice].astype(jnp.float32)
-    # no info if no committed beliefs or no surviving candidates
-    no_info = ~any_comm | (nS == 0)
-    return nS, surv_choice, no_info
+    no_info = (b[u] == UNK).all() | (nS == 0)
+    return (jnp.where(no_info, 4.0, nS.astype(jnp.float32)),
+            jnp.where(no_info, 1.0, surv[choice].astype(jnp.float32)))
+
+
+def emit_p(nS, surv, lam):
+    """P(choice) under the lapse mixture: with prob (1 - lam) a uniform pick
+    among the nS surviving scenes, with prob lam a uniform guess among all 4."""
+    return (1.0 - lam) * surv / nS + lam * 0.25
 
 
 def emission_lp(o, b, u, cand, choice, lam, WO):
-    """
-    Single-trial log p(choice | o, b, lam, ...) under the lapse mixture:
-    with prob (1 - lam) pick uniformly among the candidates that survive
-    the belief, with prob lam guess uniformly among all 4 candidates.
-    """
-    nS, surv_choice, no_info = _surv_stats(o, b, u, cand, choice, WO)
-    p = (1.0 - lam) * surv_choice / jnp.maximum(nS, 1) + lam * 0.25
-    return jnp.where(no_info, jnp.log(0.25), jnp.log(p))
-
-
-def emit_p_correct(o, b, u, cand, lam, WO):
-    """
-    Per-trial Pr(participant picks the CORRECT candidate). The data is
-    laid out so that the correct candidate is always at index 0, so this
-    is emission_lp's mixture evaluated at choice=0, on the prob scale.
-    """
-    nS, surv0, no_info = _surv_stats(o, b, u, cand, 0, WO)
-    return jnp.where(
-        no_info, 0.25,
-        (1.0 - lam) * surv0 / jnp.maximum(nS, 1) + lam * 0.25)
-
-
-def emit_stat(o, b, u, cand, choice, WO):
-    """
-    Per-trial emission sufficient statistics (without lam), consumed by
-    stats_arrays so that loglik() can be evaluated for many parameter
-    settings without re-running the survivor logic.
-
-    Convention: in the "no information" case we return (nS=4, surv=1) so
-    that the lapse formula in loglik() degenerates exactly to 1/4.
-
-    Arguments
-    ---------
-    o : int ()                order at this trial
-    b : int8 (N_W,)           belief vector at this trial
-    u : int32 (3,)            signal words at this trial
-    cand : int32 (4, 3)       candidate scenes
-    choice : int32 ()         which candidate (0..3) to evaluate
-    WO : int32 (N_O, 3)       position -> role table
-
-    Returns
-    -------
-    nS          : float ()    number of surviving candidates (or 4)
-    surv_choice : float ()    1.0 if the chosen candidate survived (or 1)
-    """
-    nS, surv_choice, no_info = _surv_stats(o, b, u, cand, choice, WO)
-    return (jnp.where(no_info, 4.0, nS.astype(jnp.float32)),
-            jnp.where(no_info, 1.0, surv_choice))
+    """Single-trial log p(choice | o, b, lam). The correct scene is always
+    candidate 0, so exp(emission_lp(..., choice=0, ...)) = P(correct)."""
+    return jnp.log(emit_p(*emit_stat(o, b, u, cand, choice, WO), lam))
 
 
 # ---------- belief transitions ----------
@@ -325,8 +274,7 @@ def _count_moves(b, u):
     """
     How many feasible belief-update moves does state (b, u) admit?
 
-    Used both as the proposal-set size in MH and as the normalizer of the
-    transition distribution. We count two kinds:
+    Used as the normalizer of the transition distribution. We count two kinds:
         single-word change : reassign ONE signal-word's belief to UNK or
                              to a currently-free meaning (subject to the
                              partial-bijection constraint).
@@ -427,140 +375,85 @@ def _movetype(b_prev, b_cur, u):
               jnp.where(swap_ok, 2, -1)))
 
 
-def _transition_lp(b_prev, b_cur, u, kappa, kappa_s):
-    """Log P(B[t] = b_cur | B[t-1] = b_prev, u) under the cost model.
-
-    Move costs: identity = 0, single-word = kappa, two-word swap = kappa_s.
-    The trial's transition distribution is normalized by Z = sum of
-    exp(-cost) over all feasible moves (identity + n_single singles +
-    n_swap swaps).
-
-    Arguments
-    ---------
-    b_prev, b_cur, u   : see _movetype
-    kappa              : float ()   log-cost of a single-word change
-    kappa_s            : float ()   log-cost of a two-word swap
-
-    Returns
-    -------
-    lp : float ()      log-probability of the transition (-inf if infeasible)
-    """
-    mt = _movetype(b_prev, b_cur, u)
-    n_single, n_swap = _count_moves(b_prev, u)
-    # Normalizer over all feasible moves available from (b_prev, u).
-    Z = 1.0 + n_single * jnp.exp(-kappa) + n_swap * jnp.exp(-kappa_s)
-    cost = jnp.where(mt == 0, 0.0,
-            jnp.where(mt == 1, kappa,
-              jnp.where(mt == 2, kappa_s, jnp.inf)))
-    lp = -cost - jnp.log(Z)
+def move_lp(mt, n1, n2, kappa, kappa_s):
+    """Log-probability of a belief move of type mt (see _movetype) when n1
+    single-word changes and n2 swaps are available (_count_moves):
+    -cost - log Z, cost 0 / kappa / kappa_s for identity / single / swap,
+    Z = 1 + n1 e^-kappa + n2 e^-kappa_s; -inf if infeasible (mt = -1)."""
+    cost = jnp.where(mt == 0, 0.0, jnp.where(mt == 1, kappa, kappa_s))
+    lp = -cost - jnp.log(1.0 + n1 * jnp.exp(-kappa) + n2 * jnp.exp(-kappa_s))
     return jnp.where(mt == -1, -jnp.inf, lp)
 
 
-# ---------- Forward Filtering Backward Ordering over order ----------
+def _transition_lp(b_prev, b_cur, u, kappa, kappa_s):
+    """Log P(B[t] = b_cur | B[t-1] = b_prev, u) under the cost model."""
+    return move_lp(_movetype(b_prev, b_cur, u), *_count_moves(b_prev, u), kappa, kappa_s)
 
-def _build_order_transition(eps_o, p_commit_o):
-    """Build the (7, 7) order transition matrix M.
 
-    Row i = O[t-1], column j = O[t]. The committed orders form an
-    irreducible block where each order stays with p (1-eps_o) and jumps to
-    each of the other 5 with p eps_o/5. The UNK row commits to one of the
-    6 orders w.p. p_commit_o (uniform) and stays UNK otherwise.
+# ---------- forward-filter / backward-sample ----------
 
-    Note: there is no return-to-UNK from a committed order — once the
-    participant commits, they don't un-commit.
+def ffbs(key, la0, trans_lp, emit_lp):
+    """Exact draw of a discrete-state chain x_0..x_{T-1} given per-trial
+    transition and emission log-probabilities, by forward filtering and
+    backward sampling. Used for the order chain and for each word's belief
+    chain. The state at t = 0 is given (one-hot la0) and never resampled.
 
-    Arguments
-    ---------
-    eps_o       : float ()   per-trial committed-order switch rate
-    p_commit_o  : float ()   per-trial commit-from-UNK rate
+    la0      (S,)          log-probabilities of x_0
+    trans_lp (T-1, S, S)   trans_lp[t-1, i, j] = log p(x_t = j | x_{t-1} = i)
+    emit_lp  (T-1, S)      emit_lp[t-1, j] = log p(data_t | x_t = j), t >= 1
+    Returns x (T,) int32.
+    """
+    def fwd(la_prev, inp):                     # la_t = log p(x_t | data_1..t)
+        tl, el = inp
+        la = jax.nn.logsumexp(la_prev[:, None] + tl, axis=0) + el
+        la = la - jax.nn.logsumexp(la)
+        return la, la
+    _, la_tail = lax.scan(fwd, la0, (trans_lp, emit_lp))
+    las = jnp.concatenate([la0[None], la_tail], axis=0)             # (T, S)
 
-    Returns
-    -------
-    M : float (N_O_FULL, N_O_FULL)   row-stochastic transition matrix
+    key, sub = random.split(key)
+    x_last = random.categorical(sub, las[-1])
+
+    def bwd(carry, inp):                       # x_t | x_{t+1} ~ la_t + trans
+        key, x_next = carry
+        la_t, tl_next = inp
+        key, sub = random.split(key)
+        x_t = random.categorical(sub, la_t + tl_next[:, x_next])
+        return (key, x_t), x_t
+    _, x_rev = lax.scan(bwd, (key, x_last), (las[:-1][::-1], trans_lp[::-1]))
+    return jnp.concatenate([x_rev[::-1], x_last[None]])
+
+
+# ---------- order chain ----------
+
+def order_trans(eps_o, p_commit_o):
+    """The (7, 7) order transition matrix M, M[i, j] = p(O[t] = j | O[t-1] = i).
+
+    UNK stays UNK w.p. 1 - p_commit_o and otherwise commits to one of the 6
+    orders uniformly; a committed order stays w.p. 1 - eps_o and otherwise
+    switches to one of the other 5 uniformly; no return to UNK.
     """
     M = jnp.zeros((N_O_FULL, N_O_FULL))
-    # UNK row: stay UNK with prob (1 - p_commit_o), else commit uniformly.
     M = M.at[UNK_O, UNK_O].set(1.0 - p_commit_o)
     M = M.at[UNK_O, :N_O].set(p_commit_o / N_O)
-    # Committed block: identity-on-diag at (1-eps_o), uniform off-diag.
     eye = jnp.eye(N_O)
-    comm = eye * (1.0 - eps_o) + (1.0 - eye) * (eps_o / (N_O - 1))
-    M = M.at[:N_O, :N_O].set(comm)
-    return M
+    return M.at[:N_O, :N_O].set(eye * (1.0 - eps_o) + (1.0 - eye) * (eps_o / (N_O - 1)))
 
 
 def ffbs_order(key, B, U, C, CH, WO, params):
-    """Forward-filter / backward-sample new O given B and data.
-
-    Standard FFBS over the 7-state HMM with emission p(choice | o, B[t])
-    and transition matrix from _build_order_transition. Conditional on B,
-    this gives an exact joint draw from p(O[0:T] | B, data, params).
-
-    Arguments
-    ---------
-    key    : PRNGKey
-    B      : int8  (T, N_W)         current belief trajectory
-    U      : int32 (T, 3)           signal words per trial
-    C      : int32 (T, 4, 3)        candidate scenes per trial
-    CH     : int32 (T,)             chosen candidate per trial
-    WO     : int32 (N_O, 3)         position -> role table
-    params : float (5,)             (lam, eps_o, kappa, kappa_s, p_commit_o)
-
-    Returns
-    -------
-    O : int8 (T,)   freshly sampled order trajectory
-    """
+    """Exact draw of O[0:T] from p(O | B, data, params): FFBS over the 7
+    order states with O[0] = UNK_O. Returns O (T,) int8."""
     lam, eps_o, _, _, p_commit_o = params
-
-    # ---- emission matrix: log p(choice_t | o, B[t]) for each (t, o) ----
-    # Then exponentiate after subtracting per-row max to prevent under/overflow
-    # in the forward sums below; the per-row normalization cancels out anyway.
-    def per_t(b_t, u_t, c_t, ch_t):
-        # vmap over the 7 possible orders for a single trial.
-        return jax.vmap(emission_lp, in_axes=(0, None, None, None, None, None, None))(
-            jnp.arange(N_O_FULL), b_t, u_t, c_t, ch_t, lam, WO)
-    # Outer vmap over the T trials.
-    log_emit = jax.vmap(per_t)(B, U, C, CH)              # (T, 7)
-    emit = jnp.exp(log_emit - log_emit.max(axis=1, keepdims=True))
-
-    trans = _build_order_transition(eps_o, p_commit_o)
-
-    # ---- initial filtered distribution alpha[0] ----
-    # Model assumes everyone starts UNK at t=0 (deterministic), so the
-    # only nonzero entry is at UNK_O — weighted by its emission at t=0.
-    alpha0 = jnp.zeros(N_O_FULL).at[UNK_O].set(emit[0, UNK_O])
-    alpha0 = alpha0 / alpha0.sum()
-
-    # ---- forward filtering ----
-    # alpha_t ∝ (alpha_{t-1} @ trans) * emit[t], normalized.
-    def fwd(alpha_prev, emit_t):
-        a = (alpha_prev @ trans) * emit_t
-        a = a / jnp.maximum(a.sum(), 1e-30)
-        return a, a
-    _, alphas_tail = lax.scan(fwd, alpha0, emit[1:])     # (T-1, 7)
-    # Glue alpha[0] back on the front to get the full (T, 7) array.
-    alphas = jnp.concatenate([alpha0[None], alphas_tail], axis=0)
-
-    # ---- backward sampling ----
-    # Sample O[T-1] from alpha[T-1], then walk backwards drawing each
-    # O[t] from p(O[t] | O[t+1], data) ∝ alpha[t] * trans[:, O[t+1]].
-    key, sub = random.split(key)
-    O_T = random.categorical(sub, jnp.log(alphas[-1] + 1e-30))
-
-    def bwd(carry, alpha_t):
-        key, O_next = carry
-        key, sub = random.split(key)
-        w = alpha_t * trans[:, O_next]
-        O_t = random.categorical(sub, jnp.log(w + 1e-30))
-        return (key, O_t), O_t
-    # Scan backwards by reversing the alpha array, then un-reverse.
-    (_, _), O_rev = lax.scan(bwd, (key, O_T), alphas[:-1][::-1])
-    return jnp.concatenate([O_rev[::-1], O_T[None]], axis=0).astype(jnp.int8)
+    emit_lp = jax.vmap(lambda b, u, c, ch: jax.vmap(
+        emission_lp, in_axes=(0, None, None, None, None, None, None))(
+            jnp.arange(N_O_FULL), b, u, c, ch, lam, WO))(B[1:], U[1:], C[1:], CH[1:])
+    log_M = jnp.log(order_trans(eps_o, p_commit_o))
+    trans_lp = jnp.broadcast_to(log_M, (B.shape[0] - 1, N_O_FULL, N_O_FULL))
+    la0 = jnp.where(jnp.arange(N_O_FULL) == UNK_O, 0.0, -jnp.inf)
+    return ffbs(key, la0, trans_lp, emit_lp).astype(jnp.int8)
 
 
-# ---------- block + swap MH over B ----------
-
-# ---------- exact per-word belief FFBS ----------
+# ---------- belief chains: exact per-word FFBS ----------
 
 N_BS = N_M + 1      # belief states per word: UNK plus the N_M meanings
 
@@ -572,7 +465,7 @@ def _word_transition_table(s, B, U, kappa, kappa_s):
     where states xp, x index {UNK, 0..N_M-1} (value = state - 1).
 
     Equivalent to calling _transition_lp on all 64 candidate pairs (that
-    is how it is verified: check_ffbs.py, part 1), but
+    is how it is verified: tests/test_ffbs.py, part 1), but
     ~17x cheaper. The move-type classification of _movetype is applied with
     the frozen words' change at trial t factored out:
       no frozen word changed : x == xp identity; else a single move by s,
@@ -626,11 +519,7 @@ def _word_transition_table(s, B, U, kappa, kappa_s):
         lambda v: b_t.at[s].set(v.astype(B.dtype)))(vals))(Bp)   # (T-1, 8, N_W)
     n1, n2 = jax.vmap(lambda bc, u: jax.vmap(
         lambda bp: _count_moves(bp, u))(bc))(Bc_prev, Un)         # (T-1, 8) each
-    logZ = jnp.log(1.0 + n1 * jnp.exp(-kappa) + n2 * jnp.exp(-kappa_s))
-    cost = jnp.where(mt == 0, 0.0,
-                     jnp.where(mt == 1, kappa,
-                               jnp.where(mt == 2, kappa_s, jnp.inf)))
-    return jnp.where(mt == -1, -jnp.inf, -cost - logZ[:, :, None])
+    return move_lp(mt, n1[:, :, None], n2[:, :, None], kappa, kappa_s)
 
 
 def ffbs_word(key, s, B, O, U, C, CH, WO, params):
@@ -694,31 +583,10 @@ def ffbs_word(key, s, B, O, U, C, CH, WO, params):
     # trans_lp[t-1, xp, x] = log p(x_t = x | x_{t-1} = xp, other words).
     trans_lp = _word_transition_table(s, B, U, kappa, kappa_s)
 
-    # Forward filter in log space, t = 0 pinned at the current state.
+    # t = 0 is pinned at the current state.
     x0 = B[0, s].astype(jnp.int32) + 1
     la0 = jnp.where(jnp.arange(N_BS) == x0, 0.0, -jnp.inf)
-
-    def fwd(la_prev, inp):
-        tl, el = inp
-        la = jax.nn.logsumexp(la_prev[:, None] + tl, axis=0) + el
-        la = la - jax.nn.logsumexp(la)
-        return la, la
-    _, la_tail = lax.scan(fwd, la0, (trans_lp, emit_lp[1:]))
-    las = jnp.concatenate([la0[None], la_tail], axis=0)             # (T, N_BS)
-
-    # Backward sample.
-    key, sub = random.split(key)
-    x_last = random.categorical(sub, las[-1])
-
-    def bwd(carry, inp):
-        key, x_next = carry
-        la_t, tl_next = inp
-        key, sub = random.split(key)
-        x_t = random.categorical(sub, la_t + tl_next[:, x_next])
-        return (key, x_t), x_t
-    (_, _), x_rev = lax.scan(bwd, (key, x_last),
-                             (las[:-1][::-1], trans_lp[::-1]))
-    x = jnp.concatenate([x_rev[::-1], x_last[None]])                # (T,)
+    x = ffbs(key, la0, trans_lp, emit_lp[1:])                         # (T,)
     return B.at[:, s].set(vals[x])
 
 
@@ -771,139 +639,37 @@ def traj_sweep(key, B, O, params, U, C, CH, WO, n_ffbs=1):
     return key, B, O
 
 
-# ---------- per-trial sufficient stats + loglik ----------
+# ---------- sufficient statistics + log-likelihood ----------
 
 @jax.jit
 def stats_arrays(B, O, U, C, CH, WO):
-    """Compute the per-trial sufficient statistics consumed by loglik().
+    """Everything log p(choices, B, O | params) depends on except the
+    parameters, so that loglik() can be evaluated for many parameter values
+    per sweep without re-running the survivor and move rules (the sampler
+    collapses them into counts, sampler.hist_stats, and evaluates the
+    likelihood at every HMC leapfrog step).
 
-    Splits the work into emission stats (per trial) and transition stats
-    (per pair of consecutive trials), plus a few scalar counts over the
-    order trajectory. With these in hand, loglik() can be evaluated for
-    many (lam, eps_o, kappa, kappa_s, p_commit_o) combinations without
-    re-running survivor / movetype logic.
-
-    Arguments
-    ---------
-    B, O, U, C, CH, WO : see glossary at the top of the file
-
-    Returns
-    -------
-    nS          : float (T,)   survivor count per trial (or 4 if no info)
-    surv        : float (T,)   1 if chosen survived (or 1 if no info)
-    mt          : int   (T,)   move type per trial (mt[0] = 0 by convention)
-    nsa         : float (T,)   n available single-word moves per trial (nsa[0] = 0)
-    nwa         : float (T,)   n available two-word swaps per trial (nwa[0] = 0)
-    n_unk_stay  : int   ()     # (t-1, t) pairs both UNK
-    n_commit    : int   ()     # pairs UNK -> committed
-    n_o_stay    : int   ()     # pairs committed -> same committed order
-    n_o_switch  : int   ()     # pairs committed -> different committed order
+    nS, surv  float (T,)     emission statistics per trial (emit_stat)
+    mt        int   (T-1,)   belief move type per transition (_movetype)
+    n1, n2    float (T-1,)   available single-word / swap moves (_count_moves)
+    nO        float (7, 7)   order transition counts: nO[i, j] = #{t: O[t-1] = i, O[t] = j}
     """
-    
-    T = B.shape[0]
-    # per-trial emission stats
-    nS, surv = jax.vmap(emit_stat, in_axes=(0, 0, 0, 0, 0, None))(
-        O, B, U, C, CH, WO)
-
-    # per-pair (t-1, t) transition stats:
-    def per_pair(t):
-        mt = _movetype(B[t - 1], B[t], U[t])
-        ns, nw = _count_moves(B[t - 1], U[t])
-        return mt, ns.astype(jnp.float32), nw.astype(jnp.float32)
-    
-    # NOTE: per_pair internally uses B and U, 
-    # even though they are not passed as arguments!
-    mt, nsa, nwa = jax.vmap(per_pair)(jnp.arange(1, T))
-
-    # Pad with a 0 at t=0 so that mt/nsa/nwa have length T 
-    # (matching nS/surv).
-    mt = jnp.concatenate([jnp.zeros(1, dtype=mt.dtype), mt])
-    nsa = jnp.concatenate([jnp.zeros(1, dtype=nsa.dtype), nsa])
-    nwa = jnp.concatenate([jnp.zeros(1, dtype=nwa.dtype), nwa])
-    
-    # order transition counts:
-    op = O[:-1]
-    oc = O[1:]
-    # stay in UNK
-    n_unk_stay = jnp.sum((op == UNK_O) & (oc == UNK_O))
-    # commit from UNK to a committed order
-    n_commit = jnp.sum((op == UNK_O) & (oc != UNK_O))
-    # stay in the same committed order
-    n_o_stay = jnp.sum((op != UNK_O) & (oc == op))
-    # switch between two different committed orders
-    n_o_switch = jnp.sum((op != UNK_O) & (oc != UNK_O) & (oc != op))
-    
-    return nS, surv, mt, nsa, nwa, n_unk_stay, n_commit, n_o_stay, n_o_switch
+    nS, surv = jax.vmap(emit_stat, in_axes=(0, 0, 0, 0, 0, None))(O, B, U, C, CH, WO)
+    mt = jax.vmap(_movetype)(B[:-1], B[1:], U[1:])
+    n1, n2 = jax.vmap(_count_moves)(B[:-1], U[1:])
+    O32 = O.astype(jnp.int32)
+    nO = jnp.zeros((N_O_FULL, N_O_FULL)).at[O32[:-1], O32[1:]].add(1.0)
+    return nS, surv, mt, n1.astype(jnp.float32), n2.astype(jnp.float32), nO
 
 
 @jax.jit
-def loglik(params, nS, surv, mt, nsa, nwa, n_unk_stay, n_commit, n_o_stay, n_o_switch):
-    """Data log-likelihood given sufficient stats and parameters.
-
-    Three terms summed:
-        em : emission likelihood under lapse mixture (per trial)
-        tr : belief-transition likelihood (per trial)
-        ot : order-transition likelihood (over the trajectory)
-
-    Arguments
-    ---------
-    params : float (5,)             (lam, eps_o, kappa, kappa_s, p_commit_o)
-    nS, surv, mt, nsa, nwa          per-trial stats from stats_arrays
-    n_unk_stay, n_commit,           scalar transition counts from stats_arrays
-      n_o_stay, n_o_switch
-
-    Returns
-    -------
-    ll : float ()                   total data log-likelihood
-    """
-
+def loglik(params, nS, surv, mt, n1, n2, nO):
+    """log p(choices, B, O | params) from stats_arrays' statistics, using the
+    same emit_p, move_lp and order_trans as the FFBS steps."""
     lam, eps_o, kappa, kappa_s, p_commit_o = params
-
-    # emission probability:
-    # Per-trial choice prob under the lapse mixture, then sum logs
-    # surv is 1 if the chosen scene survived, 0 otherwise
-    # nS is the number of surviving candidate scenes per trial
-    p_per_trial = (1.0 - lam) * surv / nS + lam * 0.25
-    em = jnp.log(p_per_trial).sum()
-
-    # belief-transition probability:
-    # Z is the per-trial normalizer of the softmax over the move types,
-    # where the choice happens at each trial.
-    # nsa is the number of feasible single-word moves per trial,
-    # nwa similar for two-word swaps.
-    # (calculated in _count_moves)
-    # 1 is exp(0), i.e., the log-probability of no move, 
-    # which is always there.
-    # (= 1 + nsa * e^-kappa + nwa * e^-kappa_s).
-    # NOTE: a consequence of this is that the probability of no move 
-    # goes down when there are more feasible moves (since Z increases).
-    Z = 1.0 + nsa * jnp.exp(-kappa) + nwa * jnp.exp(-kappa_s)
-    cost = jnp.where(mt == 0, 0.0,
-            # cost of a single-word move
-            jnp.where(mt == 1, kappa,
-              # cost of a two-word swap
-              jnp.where(mt == 2, kappa_s, 
-                # cost of a move that is not a single-word move 
-                # or a two-word swap (which is not allowed, so inf)
-                jnp.inf)))
-    # mt is the move type per trial
-    # mt[0] = 0 by construction, 
-    # so its (cost=0, log Z=0) contribution is 0.
-    # log P = log( exp(-cost) / Z ) = -cost - log Z
-    tr = (-cost - jnp.log(Z)).sum()
-
-    # order-transition probability:
-    # Each pair (O[t-1], O[t]) contributes log of its M-entry
-    # (which is the probability of the transition).
-    # we just count the four equivalence classes and multiply.
-    # NOTE: the numbers are calculated in stats_arrays based on O.
-    # xlogy(n, p) = n * log(p) with xlogy(0, 0) = 0: when a sigmoid
-    # saturates in float32 (p == 0 or 1 exactly) the log is -inf, and a plain
-    # product with a zero count would give nan (0 * -inf) and make the MH
-    # step reject unconditionally instead of using the finite ratio.
-    ot = (xlogy(n_unk_stay, 1.0 - p_commit_o)
-          + xlogy(n_commit, p_commit_o / N_O)
-          + xlogy(n_o_stay, 1.0 - eps_o)
-          + xlogy(n_o_switch, eps_o / (N_O - 1)))
-    
-    return em + tr + ot
+    # xlogy(n, p) = n log p with xlogy(0, 0) = 0: transitions that never
+    # occur contribute nothing, including the zero entries of M and entries
+    # a saturated sigmoid makes exactly 0 in float32 (0 * -inf would be nan)
+    return (jnp.log(emit_p(nS, surv, lam)).sum()
+            + move_lp(mt, n1, n2, kappa, kappa_s).sum()
+            + xlogy(nO, order_trans(eps_o, p_commit_o)).sum())

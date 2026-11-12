@@ -24,7 +24,7 @@ simulate_choices(rng, B, O, lam, U, C)     — choices from the emission model
         given trajectories: with prob lam a uniform guess, otherwise uniform
         over the candidate scenes that survive the belief (model._survivor_mask;
         no survivors or no committed heard word -> uniform), exactly the
-        distribution emission_lp / emit_p_correct evaluate.
+        distribution model.emission_lp evaluates.
 
 All functions work on the real stimuli (signals U, candidate scenes C) of the
 325 participants, so a simulated dataset is the real experiment with the
@@ -102,13 +102,10 @@ def simulate_latents(rng, tpar, U, kappa_s=NB.KAPPA_S_FIXED):
 def choice_probs(B, O, lam, U, C, WO):
     """Per (participant, trial) probability of each of the 4 candidates.
     B (P, T, 7), O (P, T), lam (P,), U (P, T, 3), C (P, T, 4, 3) -> (P, T, 4).
-    Same mixture as model.emission_lp, for all four choices at once."""
+    model.emission_lp's distribution (model.emit_p), for all four choices at once."""
     def one(o, b, u, c, lam_p):
-        surv = NB._survivor_mask(o, b, u, c, WO)
-        nS = surv.sum()
-        no_info = ~(b[u] != -1).any() | (nS == 0)
-        p = (1.0 - lam_p) * surv.astype(jnp.float32) / jnp.maximum(nS, 1) + lam_p * 0.25
-        return jnp.where(no_info, 0.25, p)
+        return vmap(lambda ch: NB.emit_p(*NB.emit_stat(o, b, u, c, ch, WO), lam_p))(
+            jnp.arange(4))
     per_ppt = vmap(one, in_axes=(0, 0, 0, 0, None))
     return vmap(per_ppt)(O, B, U, C, lam)
 

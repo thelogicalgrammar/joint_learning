@@ -1,56 +1,61 @@
 """
-Step 1 — hierarchical Gibbs fit of the partial-lexicon HMM on all participants.
+Step 1 — hierarchical HMC-within-Gibbs fit of the partial-lexicon HMM on all
+participants.
 
-All the machinery (batched data, kernels, run_chain, save_fit) lives in
-jointlearn/hmm/sampler.py and is configured through the env vars documented
-there (N_OUTER, BURN, THIN, N_CHAINS, N_FFBS, CKPT_EVERY, RESUME;
-EA_RESULTS_DIR for the output folder). Writes results/hierarchical_fit.pkl.
+The sampler lives in jointlearn/hmm/sampler.py and is configured through env
+vars documented there (N_WARMUP, N_SAMPLES, THIN, N_CHAINS, TRAJ, SEED0,
+RESUME; EA_RESULTS_DIR for the output folder). Defaults = the reported fit.
+
+Each chain runs in its own process (several chains in one process exhaust a
+4 GB GPU): this script calls itself with CHAIN=k for k = 0..N_CHAINS-1, each
+writing results/hier_chain{k}.pkl, then assembles them into
+results/hierarchical_fit.pkl. With RESUME=1 finished chain files with the
+same config are reused. `CHAIN=k python 01_fit.py` runs one chain only
+(e.g. to spread chains over several GPUs or jobs; run 01_fit.py with
+RESUME=1 afterwards to assemble).
 """
+import os
+import sys
 import time
-import numpy as np
-import jax
-import jax.numpy as jnp
-from jax import random
+import subprocess
+from pathlib import Path
 
 from jointlearn.hmm import sampler as S, model as NB, io as IO
 
 if __name__ == '__main__':
     out_dir = IO.RESULTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f'Hierarchical fit (condition-level hyperprior), JAX vmap on '
-          f'{jax.devices()[0]}.')
-    print(f'  {S.N_CHAINS} chains x {S.N_OUTER} outer iters x {S.P_all} participants '
-          f'x {S.N_COND} conditions (S.N_TPAR={S.N_TPAR}, kappa_s fixed at '
-          f'{NB.KAPPA_S_FIXED})', flush=True)
 
-    print('  compiling S.sweep_all + S.stats_all + S.mh_all (warm-up) ...',
+    if 'CHAIN' in os.environ:                       # worker: one chain
+        import jax
+        k = int(os.environ['CHAIN'])
+        print(f'[chain {k}] on {jax.devices()[0]}', flush=True)
+        p = S.save_chain(S.run_chain(k), out_dir)
+        print(f'[chain {k}] saved {p}', flush=True)
+        sys.exit(0)
+
+    print(f'Hierarchical fit (condition-level hyperprior), {S.SAMPLER}.')
+    print(f'  {S.N_CHAINS} chains x ({S.N_WARMUP} warm-up + {S.N_SAMPLES} iterations, '
+          f'thin {S.THIN}), trajectory length {S.TRAJ} x U[0.5, 1.5], {S.P_all} participants '
+          f'x {S.N_COND} conditions (N_TPAR={S.N_TPAR}, kappa_s fixed at {NB.KAPPA_S_FIXED})',
           flush=True)
-    t_c = time.time()
-    # (named *_warm, not B0/O0: `B0` is the InvGamma scale imported from
-    # config and used as a default argument of update_hyper.)
-    key_warm = random.PRNGKey(0)
-    B_warm = jnp.full((S.P_all, S.T, 7), -1, dtype=jnp.int8)
-    O_warm = jnp.full((S.P_all, S.T), S.UNK_O, dtype=jnp.int8)
-    tpar_warm = jnp.asarray(np.tile(S.HYPER_INIT[:, 0], (S.P_all, 1)),
-                            dtype=jnp.float32)
-    hyp_warm = S.init_hyper()
-    k1, B1, O1 = S.sweep_all(key_warm, B_warm, O_warm, tpar_warm)
-    s1 = S.stats_all(B1, O1)
-    _ = S.mh_all(k1, tpar_warm, s1,
-               jnp.asarray(hyp_warm['mu'][S.COND], dtype=jnp.float32),
-               jnp.asarray(hyp_warm['sigma'], dtype=jnp.float32))
-    print(f'    compiled in {time.time() - t_c:.1f}s', flush=True)
-
     t0 = time.time()
     chains = []
     for k in range(S.N_CHAINS):
-        ck_path = str(out_dir / f'hier_chain{k}_ckpt.pkl')
-        ch = S.run_chain(chain_id=k, seed=10000 + 100 * k, ckpt_path=ck_path)
+        ch = S.load_chain(out_dir, k) if S.RESUME else None
+        if ch is not None:
+            print(f'[chain {k}] reusing {S.chain_path(out_dir, k).name}', flush=True)
+        else:
+            r = subprocess.run([sys.executable, '-u', str(Path(__file__).resolve())],
+                               env=dict(os.environ, CHAIN=str(k)))
+            if r.returncode:
+                raise SystemExit(f'chain {k} failed (exit {r.returncode})')
+            ch = S.load_chain(out_dir, k)
+            assert ch is not None, f'chain {k} did not write a matching chain file'
         chains.append(ch)
     print(f'\nAll chains done in {(time.time() - t0) / 60:.1f} min', flush=True)
 
     out = out_dir / IO.FIT_NAME
     S.save_fit(chains, out)
     print(f'Saved: {out}')
-    S.print_condition_means(chains)
     print('done')

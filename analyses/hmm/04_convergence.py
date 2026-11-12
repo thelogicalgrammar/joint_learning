@@ -2,8 +2,8 @@
 Step 4 — convergence and prior-vs-posterior diagnostics of the hierarchical fit.
 
 convergence():           R-hat / ESS across chains on per-participant logit(lambda),
-                         condition means and population means; MH acceptance per
-                         chain; modal final order per chain for TRAJ_SUBSET; figure
+                         condition means and population means; HMC diagnostics (leapfrog
+                         steps, step size, divergences) per chain; figure
                          hierarchical_fit_summary.png.
 hyperprior_predictive(): new-participant prior vs posterior predictive per parameter
                          on the natural scale; figure hyperprior_predictive.png.
@@ -24,30 +24,23 @@ from scipy.stats import gaussian_kde, invgamma
 
 
 def convergence():
-    order_labels = RP.order_labels_full
-    order_colors = RP.order_colors_full
-
     fit = IO.load_fit()
     chains = fit['chains']
     PARTS = fit['parts']
-    acc = fit['acc']
     n_chains = len(chains)
     n_post = chains[0]['tpar'].shape[0]
     P = len(PARTS)
     param_names = fit['param_names']
     cond_labels = fit['cond_labels']
 
-    print(f'{n_chains} chains, {n_post} post-burn samples each, {P} participants')
-    print('MH acceptance rate (tpar) per chain [per coordinate '
-          + '/'.join(fit['param_names']) + ']: '
-          + ', '.join('/'.join(f'{r:.2f}' for r in np.atleast_1d(ch.get('mh_accept_rate', np.nan)))
-                      for ch in chains))
-    print('group-shift acceptance rate per chain [per coordinate]: '
-          + ', '.join('/'.join(f'{r:.2f}' for r in np.atleast_1d(ch.get('shift_accept_rate', np.nan)))
-                      for ch in chains))
-    print('population-shift acceptance rate per chain [per coordinate]: '
-          + ', '.join('/'.join(f'{r:.2f}' for r in np.atleast_1d(ch.get('pop_shift_accept_rate', np.nan)))
-                      for ch in chains))
+    print(f'{n_chains} chains, {n_post} post-warm-up draws each, {P} participants')
+    print(f'sampler: {fit.get("sampler", "?")}')
+    for ch in chains:
+        h = ch['hmc']
+        print(f'  chain {ch["chain_id"]} (seed {ch["seed"]}): mean leapfrog steps '
+              f'{h["steps"].mean():.0f}, step size {h["step_size"][-1]:.4f}, '
+              f'divergences {int(h["div"].sum())}, '
+              f'{(h["warm_secs"] + h["samp_secs"]) / 60:.0f} min')
 
 
     def chain_label(ch):
@@ -104,42 +97,8 @@ def convergence():
     else:
         print('\n(single chain: no R-hat on hyperparameters)')
 
-    # --- per-participant final order per chain (TRAJ_SUBSET) ---
-    print('\n=== TRAJ_SUBSET: modal final order per chain ===')
-    print(f'{"pid":>5} {"acc":>5} {"true":>5} ', end='')
-    for c in range(n_chains):
-        print(f' ch{c}({chain_label(chains[c])})', end='')
-    print()
-
-    true_orders = RP.true_order
-    TRAJ_SUBSET = fit['traj_subset']
-    parts_list = PARTS.tolist()
-
-    agreement = {}
-    for p in TRAJ_SUBSET:
-        if p not in parts_list:
-            continue
-        p_idx = parts_list.index(p)
-        row = [f'{p:>5} {acc[p_idx]:>4.0%} {order_labels[true_orders[p]]:>5}']
-        final_orders = []
-        for c in range(n_chains):
-            # last retained sample for this chain + ppt: O of shape (T,)
-            last_O = chains[c]['O'][-1, p_idx]
-            # modal of last 50 trials, restricted to committed (0..5)
-            tail = last_O[-50:]
-            comm = tail[tail < 6]
-            if len(comm) == 0:
-                final = 6  # still UNK
-            else:
-                final = int(np.bincount(comm, minlength=6).argmax())
-            final_orders.append(final)
-            marker = '*' if final == true_orders[p] else ' '
-            row.append(f'  {order_labels[final]:>5}{marker}')
-        agreement[p] = final_orders
-        print(''.join(row))
-
     # --- figure ---
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
     # (a) R-hat distribution
     ax = axes[0]
@@ -157,33 +116,10 @@ def convergence():
         k_lam = CFG.PARAM_NAMES.index('logit_lam')
         lam_pop = NB.tpar_to_nat_np(ch['hyper']['m'][:, k_lam], k_lam)   # -> natural
         ax.plot(lam_pop, alpha=0.7, lw=1.0, label=chain_label(ch))
-    ax.set_xlabel('post-burn sample idx')
+    ax.set_xlabel('post-warm-up draw')
     ax.set_ylabel(r'population $\lambda$ (m)')
     ax.set_title('Hyperposterior trace per chain')
     ax.legend(fontsize=7, ncol=2)
-
-    # (c) per-chain TRAJ_SUBSET final orders heatmap
-    ax = axes[2]
-    pids = list(agreement.keys())
-    if pids:
-        mat = np.array([agreement[p] for p in pids])      # (n_pids, n_chains)
-        ax.imshow(mat, aspect='auto',
-                  cmap=matplotlib.colors.ListedColormap(order_colors),
-                  vmin=0, vmax=6)
-        ax.set_yticks(range(len(pids)))
-        ax.set_yticklabels([f'p{p}\n(true {order_labels[true_orders[p]]})'
-                            for p in pids], fontsize=8)
-        ax.set_xticks(range(n_chains))
-        ax.set_xticklabels([chain_label(chains[c]) for c in range(n_chains)],
-                           fontsize=8)
-        for i in range(mat.shape[0]):
-            for j in range(mat.shape[1]):
-                v = mat[i, j]
-                ax.text(j, i, order_labels[v], ha='center', va='center',
-                        fontsize=7, color='white' if v < 6 else 'black',
-                        fontweight='bold' if v == true_orders[pids[i]] else 'normal')
-    ax.set_xlabel('chain')
-    ax.set_title('Final committed order per chain')
 
     plt.tight_layout()
     IO.savefig(fig, 'hierarchical_fit_summary.png')
