@@ -3,7 +3,7 @@ Step 1 — hierarchical Gibbs fit of the partial-lexicon HMM on all participants
 
 All the machinery (batched data, kernels, run_chain, save_fit) lives in
 jointlearn/hmm/sampler.py and is configured through the env vars documented
-there (N_OUTER, BURN, THIN, N_CHAINS, N_FFBS, N_SWAP, N_BLOCK, CKPT_EVERY, RESUME;
+there (N_OUTER, BURN, THIN, N_CHAINS, N_FFBS, CKPT_EVERY, RESUME;
 EA_RESULTS_DIR for the output folder). Writes results/hierarchical_fit.pkl.
 """
 import time

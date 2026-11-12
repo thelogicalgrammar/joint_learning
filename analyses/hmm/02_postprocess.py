@@ -1,13 +1,11 @@
 """
-Post-process the hierarchical fit into per-participant marginals, joint
-O samples for the survival cross-checks, and posterior predictive replicates.
+Post-process the hierarchical fit into per-participant marginals and
+posterior predictive replicates.
 
 Reads:  results/hierarchical_fit.pkl
         (contains, per chain: hyper, tpar, B, O — full joint posterior samples)
 
-Writes: results/per_participant_settle.pkl     (first-passage times of O to the
-                                                 true order, per joint sample)
-        results/per_participant_marginals.pkl   (averaged belief_marg + order_marg)
+Writes: results/per_participant_marginals.pkl   (averaged belief_marg + order_marg)
         results/per_participant_ppc.pkl         (pred_p_wrong, p-values, replicate
                                                  choices, emission log-liks)
         results/hierarchical_fit.sig.json       (signature of the fit these came from)
@@ -136,14 +134,7 @@ pc_total /= S_total
 print(f'Joint-posterior summarization done in {(time.time() - t0):.1f}s.\n')
 
 
-# ---- write the three downstream pickles ----
-# First-passage times of each sampled O trajectory to the participant's true
-# order (T if never): all the survival cross-checks need from O.
-settle, reached = AN.settle_matrix(O_all, RP.true_order)              # (S_total, P)
-IO.save_pickle({'settle': settle, 'reached': reached, 'T': T,
-                 IO.SIG_KEY: FIT_SIG},
-                'per_participant_settle.pkl')
-
+# ---- write the two downstream pickles ----
 # per-ppt natural-scale params (lam, eps_o, kappa, kappa_s, p_commit_o) at
 # the posterior-mean transformed values (≈ natural-scale posterior median;
 # kappa_s is the fixed constant)

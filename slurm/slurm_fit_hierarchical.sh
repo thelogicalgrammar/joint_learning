@@ -41,7 +41,6 @@ export BURN=${BURN:-1200}
 export THIN=${THIN:-12}
 export N_CHAINS=${N_CHAINS:-14}
 export N_FFBS=${N_FFBS:-1}
-export N_SWAP=${N_SWAP:-0}
 export CKPT_EVERY=${CKPT_EVERY:-100}
 export RESUME=${RESUME:-0}
 

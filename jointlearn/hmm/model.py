@@ -18,9 +18,8 @@ Emission:
     committed order o:  role-position match given B (lapse mixture, rate lam)
     UNK order:          bag-of-words match (decoded set ⊆ candidate set)
 
-Public functions used by fit_hierarchical.py and infer_per_participant.py:
-    traj_sweep        one Gibbs pass (order FFBS + per-word belief FFBS
-                      + n_swap swap MH moves; optional legacy block MH)
+Public functions used by the sampler (sampler.py) and the simulator:
+    traj_sweep        one Gibbs pass (order FFBS + per-word belief FFBS)
     stats_arrays      per-trial sufficient statistics
     loglik            data log-likelihood given suff. stats and params
 
@@ -62,10 +61,6 @@ Per-participant arrays (T = number of trials, usually 200):
          same convention. Used to map B-beliefs about the positional
          words to candidate-scene role slots in the committed-order
          emission rule.
-    HT : int32 (N_W, T)  ("history-of-trials-by-word", padded with -1)
-         HT[s, :HC[s]] are the trial indices on which word s was uttered.
-    HC : int32 (N_W,)
-         HC[s] is the number of trials on which word s was uttered.
 
 Parameter vector (used everywhere as `params`):
     params : float32 (5,)
@@ -110,10 +105,9 @@ N_O_FULL = 7        # committed orders + UNK_O
 # far the sampled belief trajectories contained zero two-word swap
 # transitions; with no swaps the likelihood is monotone increasing in
 # kappa_s (only through the normaliser Z), so a fitted kappa_s runs off to
-# wherever the hyperprior stops it. The swap transition type is kept so
-# that swap_move (a relabeling MH proposal that escapes lexicon-permutation
-# modes) remains admissible; KAPPA_S_FIXED = 20 makes swap transitions
-# ~e^-20 as likely as identity, i.e. only accepted on overwhelming evidence.
+# wherever the hyperprior stops it. The swap transition type stays in the
+# model (the reported fit was run with it); KAPPA_S_FIXED = 20 makes swap
+# transitions ~e^-20 as likely as identity, so they are negligible.
 KAPPA_S_FIXED = 20.0
 N_TPAR = 4          # number of fitted transformed parameters
 
@@ -655,8 +649,7 @@ def ffbs_word(key, s, B, O, U, C, CH, WO, params):
     frozen vector and calling emission_lp.
 
     Two constraints are NOT part of `_transition_lp` and are imposed here
-    as state masks, matching what block_move / swap_move enforced through
-    their proposals:
+    as state masks:
       - partial bijection: meaning m is infeasible at trial t if some other
         word holds m at t (emission set to -inf);
       - the initial belief B[0] is fixed: the forward pass starts one-hot
@@ -740,253 +733,27 @@ def ffbs_beliefs(key, B, O, U, C, CH, WO, params):
     return lax.fori_loop(0, N_W, body, (key, B))
 
 
-def _partial_lp(O, B, U, C, CH, WO, params, a, e):
-    """log p(data + transitions) over a window of trials, JAX-friendly.
-
-    Computes the sum of emission log-probs on [a, e) plus belief-transition
-    log-probs on (a, e]. Used as the un-normalized log-posterior in the MH
-    accept/reject for block_move and swap_move (where everything outside
-    the window cancels in the ratio).
-
-    Implementation: rather than slicing (which would break under jit with
-    dynamic a, e), we evaluate emission and transition log-probs at every
-    trial 0..T-1 and zero out those outside the window via a mask.
-
-    Arguments
-    ---------
-    O, B, U, C, CH, WO, params : see ffbs_order
-    a, e : int ()    window of trials [a, e) (e is exclusive for emission;
-                     transition is summed over t in [max(a,1), min(e, T-1)])
-
-    Returns
-    -------
-    lp : float ()    sum of in-window emission + transition log-probs
-    """
-    lam, _, kappa, kappa_s, _ = params
-    T = B.shape[0]
-    t_idx = jnp.arange(T)
-    # ---- emission term ----
-    # vmap emission_lp over all T trials; mask down to [a, e).
-    emit_lp = jax.vmap(emission_lp, in_axes=(0, 0, 0, 0, 0, None, None))(
-        O, B, U, C, CH, lam, WO)
-    emit_mask = (t_idx >= a) & (t_idx < e)
-    emit_sum = jnp.where(emit_mask, emit_lp, 0.0).sum()
-    # ---- transition term ----
-    # For each t in 1..T-1 compute log P(B[t] | B[t-1], U[t]).
-    def trans_at(t):
-        return _transition_lp(B[t - 1], B[t], U[t], kappa, kappa_s)
-    trans_lp = jax.vmap(trans_at)(jnp.arange(1, T))      # (T-1,)
-    # We want transitions touching the window — i.e. those whose t is in
-    # [max(a,1), min(e, T-1)] (clamped on both ends to stay in-range).
-    trans_mask = (jnp.arange(1, T) >= jnp.maximum(a, 1)) & \
-                 (jnp.arange(1, T) <= jnp.minimum(e, T - 1))
-    trans_sum = jnp.where(trans_mask, trans_lp, 0.0).sum()
-    return emit_sum + trans_sum
-
-
-def block_move(key, B, O, U, C, CH, WO, params, HT, HC):
-    """MH proposal: change one word's belief over a contiguous block.
-
-    Picks a word s, picks an interval [a, e) bounded by trials on which s
-    appears, then proposes a single new constant value for B[a:e, s].
-    Accept/reject via standard MH against _partial_lp on the window.
-
-    Arguments
-    ---------
-    key                                  : PRNGKey
-    B, O, U, C, CH, WO, params, HT, HC   : see module-level glossary
-
-    Returns
-    -------
-    B_new : int8 (T, N_W)   updated belief (unchanged if proposal rejected)
-
-    Proposal symmetry
-    -----------------
-    The accept ratio uses the simple form log_u < new_lp - old_lp, which is
-    valid only if the proposal density is symmetric: q(B_new | B) = q(B | B_new).
-    Here that holds because every step of the proposal chain is either
-    data-only (so independent of B) or has the same cardinality from either
-    state:
-      - pick word s            : uniform over N_W, data-free        ✓
-      - pick start a           : uniform over HC[s] options, data-only ✓
-      - pick end e             : uniform over (n_later + 1) options,
-                                 derived from HT[s] only            ✓
-      - pick new value v_new   : uniform over `cand_free`. Its size K
-                                 depends on the "other-held" set H of
-                                 meanings that some OTHER word w != s
-                                 holds anywhere in the block. H does NOT
-                                 depend on B[a:e, s] (we explicitly mask
-                                 out word s in `free_for`), so H is the
-                                 same in forward and reverse. The current
-                                 value v is excluded from cand_free in
-                                 both directions, giving |cand_free| = K
-                                 in both — so q(v_new | v_old) =
-                                 q(v_old | v_new) = 1/K.                ✓
-    Validity of the (a, e) window is also direction-invariant: a and e are
-    always trials where word s appears (or e = T), so the boundary
-    transitions B[a-1] -> B[a] and B[e-1] -> B[e] are single-word moves
-    in BOTH directions (or absent when e = T).
-    """
-    T = B.shape[0]
-    # 5 sub-keys: word, block-start, block-end, new-value, MH-uniform.
-    keys = random.split(key, 5)
-    # 1) Pick a word s uniformly.
-    s = random.randint(keys[0], (), 0, N_W)
-    cnt = HC[s]
-    # If this word never appeared, we cannot propose anything — mark invalid.
-    valid = cnt > 0
-    # 2) Pick a start trial a uniformly from the trials where s appears.
-    a_idx = jnp.where(valid, random.randint(keys[1], (), 0, jnp.maximum(cnt, 1)), 0)
-    a = HT[s, a_idx]
-    # We never touch t=0 (the initial belief is fixed to all-UNK).
-    valid = valid & (a >= 1)
-    # 3) Pick an end trial e. Candidates are trials with word s strictly
-    #    after a, PLUS the past-the-end sentinel T.
-    later = (HT[s] > a) & (jnp.arange(T) < cnt)
-    n_later = later.sum()
-    r = random.randint(keys[2], (), 0, n_later + 1)
-    # If r selects the sentinel, set e = T; else pick the r-th later trial.
-    later_positions = jnp.where(later, HT[s], T + 1)
-    sorted_later = jnp.sort(later_positions)
-    e = jnp.where(r == n_later, T, sorted_later[r])
-
-    # The current value v held across the block. It must be the same on
-    # every trial in [a, e) — if not, we treat the proposal as invalid.
-    v = B[a, s]
-    t_idx = jnp.arange(T)
-    in_block = (t_idx >= a) & (t_idx < e)
-    constant_in_block = jnp.all(jnp.where(in_block, B[:, s] == v, True))
-    valid = valid & constant_in_block
-
-    # 4) Enumerate feasible new values for word s on this block. A value m
-    #    is "free" if no OTHER word holds m at any trial inside the block.
-    def free_for(mm):
-        # held[t, w] = True iff word w (other than s) holds meaning mm at t.
-        held = (B == mm) & (jnp.arange(N_W)[None, :] != s)
-        held_any_t = jnp.any(jnp.where(in_block[:, None], held, False))
-        return ~held_any_t
-    free_mask = jax.vmap(free_for)(jnp.arange(N_M))      # (7,)
-    # Build the 8 candidate values: UNK plus the 7 meanings, with -1 first.
-    cand_vals = jnp.concatenate([jnp.array([-1]), jnp.arange(N_M)])
-    cand_free = jnp.concatenate([
-        # Going back to UNK is only allowed when v is currently committed.
-        jnp.array([v != -1]),
-        # Otherwise any free meaning that isn't already v.
-        free_mask & (jnp.arange(N_M) != v),
-    ])
-    nf = cand_free.sum()
-    valid = valid & (nf > 0)
-    # 5) Sample new value uniformly among the feasible ones.
-    weights = cand_free.astype(jnp.float32)
-    v_new = random.categorical(keys[3], jnp.log(weights + 1e-30))
-    v_new = cand_vals[v_new]
-
-    # 6) Build the proposed B and MH-accept/reject by partial log-prob.
-    B_new = jnp.where(in_block[:, None] & (jnp.arange(N_W)[None, :] == s),
-                      v_new, B).astype(B.dtype)
-    old_lp = _partial_lp(O, B,     U, C, CH, WO, params, a, e)
-    new_lp = _partial_lp(O, B_new, U, C, CH, WO, params, a, e)
-    log_u = jnp.log(random.uniform(keys[4]))
-    accept = valid & (log_u < (new_lp - old_lp))
-    return jnp.where(accept, B_new, B).astype(B.dtype)
-
-
-def swap_move(key, B, O, U, C, CH, WO, params):
-    """
-    MH proposal: swap the beliefs of two words from some trial onwards.
-
-    Picks two distinct words (w1, w2) and a trial t0 (uniform among trials
-    ≥ 1 where at least one of them is uttered), then swaps B[t0:, w1] and
-    B[t0:, w2]. Helps the sampler escape lexicon-order confounds where the
-    only difference between two posterior modes is a permutation of two
-    word-meaning mappings.
-
-    Arguments
-    ---------
-    key                            : PRNGKey
-    B, O, U, C, CH, WO, params     : see module-level glossary
-
-    Returns
-    -------
-    B_new : int8 (T, N_W)   updated belief (unchanged if proposal rejected)
-
-    Proposal symmetry
-    -----------------
-    The swap is its own inverse: applying the same (w1, w2, t0) to B_new
-    recovers B. The picks (w1, w2) are uniform and data-free. The set of
-    eligible t0 values is {t >= 1 : w1 in U[t] OR w2 in U[t]}, a function
-    of U only — same in forward and reverse. The "non-trivial" validity
-    check (B[:, w1] != B[:, w2] somewhere in the tail) is also direction-
-    invariant since the swap just relabels those two columns. So
-    q(B_new | B) = q(B | B_new) and the simple log_u < new_lp - old_lp
-    acceptance is correct.
-    """
-    T = B.shape[0]
-    # 5 sub-keys: w1, w2, t0-pick, MH-uniform (keys[3]); keys[4] is unused
-    # (kept so the key stream of existing checks is unchanged).
-    keys = random.split(key, 5)
-    w1 = random.randint(keys[0], (), 0, N_W)
-    w2 = random.randint(keys[1], (), 0, N_W)
-    valid = w1 != w2
-    # Eligible trials: t >= 1 AND at least one of {w1, w2} appears in U[t].
-    eligible = jnp.any((U == w1) | (U == w2), axis=1) & (jnp.arange(T) >= 1)
-    n_elig = eligible.sum()
-    valid = valid & (n_elig > 0)
-    r = random.randint(keys[2], (), 0, jnp.maximum(n_elig, 1))
-    # Pick the r-th eligible trial. T+1 sentinel pushes non-eligible
-    # entries to the right after sorting.
-    elig_positions = jnp.where(eligible, jnp.arange(T), T + 1)
-    sorted_pos = jnp.sort(elig_positions)
-    t0 = sorted_pos[r]
-    # If B[w1] == B[w2] throughout the tail, the swap is a no-op; skip.
-    in_tail = jnp.arange(T) >= t0
-    diff = (B[:, w1] != B[:, w2]) & in_tail
-    valid = valid & diff.any()
-    # Build the proposed B by swapping columns w1 and w2 on the tail only.
-    tmp1 = jnp.where(in_tail, B[:, w2], B[:, w1]).astype(B.dtype)
-    tmp2 = jnp.where(in_tail, B[:, w1], B[:, w2]).astype(B.dtype)
-    B_new = B.at[:, w1].set(tmp1).at[:, w2].set(tmp2)
-    # MH on the affected window [t0, T).
-    old_lp = _partial_lp(O, B,     U, C, CH, WO, params, t0, T)
-    new_lp = _partial_lp(O, B_new, U, C, CH, WO, params, t0, T)
-    log_u = jnp.log(random.uniform(keys[3]))
-    accept = valid & (log_u < (new_lp - old_lp))
-    return jnp.where(accept, B_new, B).astype(B.dtype)
-
-
 # ---------- one Gibbs sweep ----------
 
-@partial(jax.jit, static_argnames=('n_block', 'n_swap', 'n_ffbs'))
-def traj_sweep(key, B, O, params, U, C, CH, WO, HT, HC,
-               n_block=0, n_swap=0, n_ffbs=1):
+@partial(jax.jit, static_argnames=('n_ffbs',))
+def traj_sweep(key, B, O, params, U, C, CH, WO, n_ffbs=1):
     """One full Gibbs pass over (O, B). Returns (key, B, O).
 
     Structure:
         1) Exact joint draw of O given B (forward-filter / backward-sample).
         2) n_ffbs passes of exact per-word FFBS over B (ffbs_beliefs):
            each word's whole trajectory is redrawn from its conditional
-           given the other words. This is the workhorse for B.
-        3) n_block MH proposals for contiguous block changes of B
-           (block_move). Legacy kernel, superseded by 2): blind proposals
-           with ~0.3% acceptance on real data. Off by default; kept for
-           reference and for old-vs-new checks.
-        4) n_swap MH proposals for two-word lexicon swaps on a tail of B
-           (swap_move). Off by default: per-word FFBS reaches a swapped
-           labelling in two exact draws via the UNK state, and on the real
-           data FFBS-only and FFBS+swap chains give the same marginals and
-           log-likelihoods within seed-to-seed noise, while the swap stage
-           (~0.1% acceptance) costs ~40% of the sweep. Kept as an option.
+           given the other words and O.
 
-    All B stages share O for the whole sweep. n_ffbs, n_block, n_swap are
-    declared static so the loop bounds are concrete.
+    n_ffbs is declared static so the loop bound is concrete.
 
     Arguments
     ---------
     key                          : PRNGKey
     B, O                         : current state, see glossary
     params                       : (5,) parameter vector
-    U, C, CH, WO, HT, HC         : participant data, see glossary
-    n_block, n_swap, n_ffbs      : ints, iteration counts per stage
+    U, C, CH, WO                 : participant data, see glossary
+    n_ffbs                       : int, per-word FFBS passes per sweep
 
     Returns
     -------
@@ -1001,22 +768,6 @@ def traj_sweep(key, B, O, params, U, C, CH, WO, HT, HC,
         key, B = carry
         return ffbs_beliefs(key, B, O, U, C, CH, WO, params)
     key, B = lax.fori_loop(0, n_ffbs, ffbs_step, (key, B))
-
-    # 3) n_block block-move MH iterations on B (legacy, default 0).
-    def block_step(i, carry):
-        key, B = carry
-        key, sub = random.split(key)
-        B = block_move(sub, B, O, U, C, CH, WO, params, HT, HC)
-        return key, B
-    key, B = lax.fori_loop(0, n_block, block_step, (key, B))
-
-    # 4) n_swap swap-move MH iterations on B.
-    def swap_step(i, carry):
-        key, B = carry
-        key, sub = random.split(key)
-        B = swap_move(sub, B, O, U, C, CH, WO, params)
-        return key, B
-    key, B = lax.fori_loop(0, n_swap, swap_step, (key, B))
     return key, B, O
 
 

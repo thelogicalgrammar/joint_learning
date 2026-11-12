@@ -4,8 +4,6 @@ Analysis helpers shared by the HMM pipeline scripts (analyses/hmm).
     bag_consistent_mask        — candidates consistent with the utterance up to word order
     compute_swap_mask          — the word-order-discriminating trials (~9%)
     pack_choices, unpack_choices — 2-bit packing of 4AFC choice sequences
-    settle_matrix              — first-passage times of sampled O to the true order
-    km_frame                   — per-participant survival frame for lifelines
     violins                    — coloured violins with median + CI bars
 """
 import numpy as np
@@ -57,38 +55,6 @@ def unpack_choices(packed, T):
     packed = np.asarray(packed, dtype=np.uint8)
     q = np.stack([(packed >> (2 * i)) & 3 for i in range(4)], axis=-1)
     return q.reshape(packed.shape[:-1] + (-1,))[..., :T]
-
-
-def settle_matrix(o_samples, true_order):
-    """First-passage times of sampled order trajectories to the true order.
-
-    o_samples : int array (S, P, T) of posterior O samples, or the legacy
-                dict {p: int array (S, T)}
-    true_order: int array (P,) of each participant's true order
-
-    Returns
-    -------
-    settle  : int16 (S, P)   first trial where O == true order (T if never)
-    reached : bool  (S, P)   whether the trajectory ever reaches it
-              (identically settle < T; returned for convenience)
-    """
-    if isinstance(o_samples, dict):
-        o_samples = np.stack([o_samples[p] for p in range(len(o_samples))], axis=1)
-    S, P, T = o_samples.shape
-    mask = o_samples == np.asarray(true_order)[None, :, None]         # (S, P, T)
-    reached = mask.any(axis=2)
-    settle = np.where(reached, np.argmax(mask, axis=2), T).astype(np.int16)
-    return settle, reached
-
-
-def km_frame(settle_sp, true_order, T):
-    """Per-participant survival frame from posterior settle times (S, P):
-    event time = rounded posterior median, censored iff it equals T."""
-    import pandas as pd
-    settle = np.round(np.median(settle_sp, axis=0)).astype(int)
-    return pd.DataFrame({'T': settle,
-                         'event': (settle < T).astype(int),
-                         'group': [data.order_labels[k] for k in true_order]})
 
 
 # ---------------------------------------------------------- plotting ----

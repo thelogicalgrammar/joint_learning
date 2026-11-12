@@ -19,8 +19,7 @@ Hierarchy (see config.py):
   m_k ~ N(mu0_k, sd0_k^2),  sigma_k^2 ~ IG(A0, B0),  tau_k^2 ~ IG(A_TAU, B_TAU)
 
 Condition effects on learnability are read from the posterior of mu[:, k]
-(03_condition_effects.py), replacing the earlier post-hoc survival
-analysis on latent first-passage times.
+(03_condition_effects.py).
 
 Writes a per-chain checkpoint every CKPT_EVERY iters so partial results can
 be analysed without waiting for the full run.
@@ -51,8 +50,6 @@ THIN = int(os.environ.get('THIN', 12))
 TRAJ_SUBSET = [42, 102, 247, 63, 213, 250, 114]      # ppts shown in the summary figure
 N_CHAINS = int(os.environ.get('N_CHAINS', 14))        # independent seeds
 N_FFBS = int(os.environ.get('N_FFBS', 1))           # per-word belief FFBS passes / sweep
-N_BLOCK = int(os.environ.get('N_BLOCK', 0))         # legacy block-move MH (0 = off)
-N_SWAP = int(os.environ.get('N_SWAP', 0))          # swap MH (0 = off; see traj_sweep)
 CKPT_EVERY = int(os.environ.get('CKPT_EVERY', 100))
 # RESUME=1: reuse finished chains and continue interrupted ones from their
 # last checkpoint (results/hier_chain{k}_ckpt.pkl). Checkpoints carry the
@@ -73,16 +70,6 @@ N_COND = len(RP.order_labels)
 U = jnp.asarray(np.ascontiguousarray(RP.signals.transpose(1, 0, 2)), dtype=jnp.int32)
 C = jnp.asarray(np.ascontiguousarray(RP.cand_mean.transpose(1, 0, 2, 3)), dtype=jnp.int32)
 CH = jnp.asarray(np.ascontiguousarray(RP.choices.T), dtype=jnp.int32)
-HT_np = np.full((P_all, 7, T), -1, dtype=np.int32)
-HC_np = np.zeros((P_all, 7), dtype=np.int32)
-for p in range(P_all):
-    Up = np.asarray(U[p])
-    for s in range(7):
-        idx = np.where(np.any(Up == s, axis=1))[0]
-        HT_np[p, s, :len(idx)] = idx
-        HC_np[p, s] = len(idx)
-HT = jnp.asarray(HT_np)
-HC = jnp.asarray(HC_np)
 WO = jnp.asarray(RP.word_orders, dtype=jnp.int32)
 
 
@@ -97,9 +84,8 @@ def sweep_all(key, B, O, tpar):
     keys = random.split(key, P_all + 1)
     nat = NB.to_nat(tpar)                                        # (P, 5)
     _, B_new, O_new = vmap(NB.traj_sweep,
-                           in_axes=(0, 0, 0, 0, 0, 0, 0, None,
-                                    0, 0, None, None, None))(
-        keys[1:], B, O, nat, U, C, CH, WO, HT, HC, N_BLOCK, N_SWAP, N_FFBS)
+                           in_axes=(0, 0, 0, 0, 0, 0, 0, None, None))(
+        keys[1:], B, O, nat, U, C, CH, WO, N_FFBS)
     return keys[0], B_new, O_new
 
 
@@ -349,7 +335,7 @@ def _config_tuple():
     # by re-running with RESUME=1 and a larger N_OUTER (see _load_ckpt).
     def _t(a):
         return tuple(float(x) for x in np.ravel(a))
-    return (BURN, THIN, N_BLOCK, N_SWAP, N_FFBS, P_all, T, N_TPAR,
+    return (BURN, THIN, N_FFBS, P_all, T, N_TPAR,
             tuple(int(c) for c in COND),
             _t(PROP_SD), _t(SHIFT_SD), _t(SHIFT_SD_POP),
             _t(HYPER_INIT), float(TAU_INIT), _t(PRIOR_MU0), _t(PRIOR_SD0),

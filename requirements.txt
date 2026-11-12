@@ -1,4 +1,4 @@
-# Shared loaders + HMM pipeline (model/experiment_analysis). Tested with
+# Shared loaders + HMM pipeline (jointlearn, analyses/hmm). Tested with
 # Python 3.13, jax 0.6.0 (CUDA 12). For a GPU install use `pip install "jax[cuda12]"`.
 numpy
 pandas
@@ -7,6 +7,5 @@ matplotlib
 jax
 arviz
 xarray
-lifelines
-# model/scripts/model_free_analysis.py (logistic regression in Python)
+# analyses/model_free/model_free_analysis.py (logistic regression in Python)
 bambi

@@ -24,12 +24,12 @@ learnability mirrors typological frequency.
   `model_free_analysis.py` (bambi), plus two figures.
 - `analyses/hmm/` — the HMM pipeline as numbered steps (fit, post-process,
   condition effects = main result, convergence, posterior predictive checks,
-  per-participant plots, survival cross-checks, parameter recovery). See its
+  per-participant plots, parameter recovery). See its
   `README.md`.
 - `tests/` — correctness checks of the HMM kernels and simulator (plain
   scripts, also collected by `pytest`).
-- `slurm/` — SLURM scripts for the HMM fit, its post-processing and the
-  parameter recovery on a GPU cluster (`README_snellius.md`).
+- `slurm/` — SLURM scripts for the HMM fit and the
+  parameter recovery on a GPU cluster (`slurm/README.md`).
 
 ## Environment
 
